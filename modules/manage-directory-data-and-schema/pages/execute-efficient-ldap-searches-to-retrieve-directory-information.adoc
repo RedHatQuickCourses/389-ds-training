@@ -1,0 +1,386 @@
+#  Execute efficient LDAP searches to retrieve directory information.
+
+This content is presented in Antora AsciiDoc format, combining detailed technical explanations with practical hands-on activities to facilitate learning about efficient LDAP searches.
+
+// Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
+// Understand Directory Services and LDAP Fundamentals
+// ...
+// Manage Directory Data and Schema
+// - Perform LDAP data manipulation operations (add, modify, delete entries) using command-line tools.
+// - Execute efficient LDAP searches to retrieve directory information. <--- THIS TOPIC
+// - Explain the role of schema in LDAP and manage object classes and attributes.
+// - Import and export directory data using LDIF files.
+// - Administer user and group entries within the directory.
+// - Hands-on Lab: Manage directory entries and perform advanced LDAP searches.
+
+= Execute Efficient LDAP Searches to Retrieve Directory Information
+
+Efficiently retrieving information from a directory server is a fundamental skill for any administrator or application developer interacting with LDAP. Red Hat Directory Server (RHDS) acts as a central repository for identity and access management, and the ability to perform precise and quick searches is critical for tasks ranging from user authentication to application configuration. This section will delve into the mechanisms of LDAP searching, focusing on the `ldapsearch` utility, filter syntax, search scopes, and practical examples to master data retrieval.
+
+[[ldap-search-fundamentals]]
+== LDAP Search Fundamentals
+
+An LDAP search operation allows clients to query the directory for entries that match specified criteria. Understanding the core components of an LDAP search is crucial for constructing effective queries.
+
+=== Key Components of an LDAP Search
+
+An LDAP search operation is defined by several parameters:
+
+*   *Base DN (Base Distinguished Name):* This is the starting point in the DIT (Directory Information Tree) from where the search will begin. All search results will be children or the base entry itself. Specifying an appropriate base DN significantly narrows down the search scope, improving performance.
+*   *Scope:* The scope determines how deep the search will traverse the DIT from the base DN. There are three primary scopes:
+    ** `base` (or `baseObject`):* Searches only the entry specified by the base DN. No subordinates are included.
+    ** `one` (or `singleLevel`):* Searches the direct children (one level down) of the base DN, but not the base entry itself or any deeper subordinates.
+    ** `sub` (or `wholeSubtree`):* Searches the entry specified by the base DN and all its subordinates to any depth. This is the most common and often the default scope.
+*   *Filter:* This is a logical expression that defines the criteria an entry must meet to be included in the search results. Filters are written using a specific syntax (RFC 4515) and can combine multiple conditions using logical operators.
+*   *Attributes to Return:* You can specify which attributes you want to retrieve from the matching entries. By default, `ldapsearch` returns all user attributes. Requesting only necessary attributes can reduce network traffic and improve performance, especially for entries with many attributes or large attribute values.
+*   *Size Limit:* The maximum number of entries to return.
+*   *Time Limit:* The maximum time (in seconds) the server should spend performing the search.
+
+=== The `ldapsearch` Utility
+
+The `ldapsearch` command-line utility is the primary tool for performing LDAP queries against Red Hat Directory Server. It allows you to construct and execute searches with various parameters.
+
+.`ldapsearch` common options
+[cols="1,1,2"]
+|===
+|Option |Description |Example
+
+|`-h <host>`
+|Specifies the hostname or IP address of the LDAP server.
+|`-h localhost`
+
+|`-p <port>`
+|Specifies the port number of the LDAP server (default is 389 for LDAP, 636 for LDAPS).
+|`-p 389`
+
+|`-D <binddn>`
+|Specifies the Distinguished Name (DN) to bind to the directory. This is typically an administrator account.
+|`-D "cn=Directory Manager"`
+
+|`-w <password>`
+|Specifies the password for the bind DN. It's often safer to use `-W` to be prompted for the password.
+|`-w secretpassword`
+
+|`-x`
+|Performs a simple bind (no authentication mechanism specified).
+|`-x`
+
+|`-b <baseDN>`
+|Specifies the base DN for the search.
+|`-b "dc=example,dc=com"`
+
+|`-s <scope>`
+|Specifies the search scope: `base`, `one`, or `sub`.
+|`-s sub`
+
+|`<filter>`
+|The LDAP search filter. This is usually the last argument and does not require a preceding hyphen.
+|`(objectClass=*)`
+
+|`<attributes>`
+|A space-separated list of attributes to return.
+|`cn uid mail`
+
+|`-z <sizelimit>`
+|Sets the maximum number of entries to return.
+|`-z 100`
+
+|`-l <timelimit>`
+|Sets the maximum time (in seconds) for the search.
+|`-l 30`
+|===
+
+[[ldap-filter-syntax]]
+=== LDAP Filter Syntax
+
+LDAP filters use a prefix notation (Polish notation) where the operator comes before its operands. The entire filter must be enclosed in parentheses.
+
+.`LDAP Filter Syntax Examples`
+[cols="1,2,2"]
+|===
+|Operator |Description |Example
+
+|`=`
+|Equality match. Checks if an attribute's value is exactly equal to the specified value.
+|`(uid=jdoe)`
+
+|`~=`
+|Approximate match. (Not commonly used or supported consistently).
+|`(sn~=johnson)`
+
+|`>=`
+|Greater than or equal to. (For ordered attributes like integers or dates).
+|`(uidNumber>=1000)`
+
+|`<=`
+|Less than or equal to. (For ordered attributes).
+|`(uidNumber<=2000)`
+
+|`*`
+|Wildcard. Matches any sequence of zero or more characters. Can be used at the beginning, middle, or end of a string.
+|`(cn=John*)` (Starts with "John") +
+|`(mail=*@example.com)` (Ends with "@example.com") +
+|`(description=*network*)` (Contains "network")
+
+|`&`
+|Logical AND. All sub-filters must be true.
+|`(&(objectClass=person)(uid=jdoe))`
+
+|`|`
+|Logical OR. At least one sub-filter must be true.
+|`(|(uid=jdoe)(uid=asmith))`
+
+|`!`
+|Logical NOT. The sub-filter must be false.
+|`(!(objectClass=organizationalUnit))` (Entries that are NOT an organizational unit)
+
+|Presence
+|Checks if an attribute exists.
+|`(mail=*)` (Entries that have a `mail` attribute)
+
+|Absence
+|Checks if an attribute does *not* exist.
+|`(!(mail=*))` (Entries that do NOT have a `mail` attribute)
+|===
+
+.Filter Escape Characters
+If a value in your filter contains special characters like `(`, `)`, `*`, `\`, or `NUL` (null character), you must escape them using a backslash followed by the hexadecimal representation of the character.
+For example, a `*` (asterisk) is `\2a`, `(` is `\28`, `)` is `\29`. This is less common for simple filters but essential for complex scenarios.
+
+[[hands-on-lab-ldap-searches]]
+== Hands-on Lab: Execute Efficient LDAP Searches
+
+In this lab, you will practice using the `ldapsearch` command to retrieve directory information using various base DNs, scopes, and filter combinations.
+
+=== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance.
+*   Basic directory data populated, including users and groups. If you've completed previous labs, you should have some data under `dc=example,dc=com`.
+*   Access to a shell on the RHDS server or a client machine with `openldap-clients` installed.
+
+.Lab Setup: Populate Sample Data (if needed)
+If your directory is empty, execute the following commands to add some sample entries for the lab. Assume your RHDS instance is running and you can bind as `cn=Directory Manager`.
+
+Create an LDIF file named `sample_data.ldif`:
+
+```ldif
+dn: ou=People,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: People
+
+dn: ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: Groups
+
+dn: uid=jsmith,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Jane Smith
+sn: Smith
+uid: jsmith
+mail: jsmith@example.com
+userPassword: password
+description: Employee in Sales
+
+dn: uid=rjohnson,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Robert Johnson
+sn: Johnson
+uid: rjohnson
+mail: rjohnson@example.com
+userPassword: password
+description: Employee in Marketing
+
+dn: uid=adavis,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Alice Davis
+sn: Davis
+uid: adavis
+mail: adavis@example.com
+userPassword: password
+employeeType: Contractor
+
+dn: cn=sales,ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: sales
+member: uid=jsmith,ou=People,dc=example,dc=com
+
+dn: cn=marketing,ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: marketing
+member: uid=rjohnson,ou=People,dc=example,dc=com
+```
+
+Add the data to the directory:
+
+```bash
+ldapadd -x -D "cn=Directory Manager" -W -f sample_data.ldif
+```
+You will be prompted for the Directory Manager's password.
+
+Now, let's proceed with the search exercises. We will assume the default port 389 and the `dc=example,dc=com` suffix. Replace `localhost` with your RHDS server's hostname or IP if it's not local.
+
+=== Activity 1: Basic Subtree Searches
+
+This activity demonstrates finding entries under a specified base DN using the default subtree scope.
+
+.Task 1.1: Find all entries in the `dc=example,dc=com` suffix.
+This is a common way to get an overview of your directory content.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectClass=*)"
+```
+
+.Expected Output:
+You should see all entries including `dc=example,dc=com`, `ou=People`, `ou=Groups`, and the user and group entries you added. Each entry will be separated by blank lines.
+
+.Task 1.2: Find a specific user by their `uid`.
+This demonstrates a more targeted search for a known identifier.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(uid=jsmith)"
+```
+
+.Expected Output:
+Only the entry for `uid=jsmith,ou=People,dc=example,dc=com` should be returned, along with all its attributes.
+
+.Task 1.3: Find all entries with the `inetOrgPerson` object class.
+This helps identify all user accounts, as `inetOrgPerson` is a common object class for users.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectClass=inetOrgPerson)"
+```
+
+.Expected Output:
+You should see the `jsmith`, `rjohnson`, and `adavis` entries.
+
+=== Activity 2: Understanding Search Scopes
+
+This activity focuses on how the `base`, `one`, and `sub` scopes affect search results.
+
+.Task 2.1: Perform a base-level search.
+Search only the `ou=People,dc=example,dc=com` entry itself, not its children.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" -s base "(objectClass=*)"
+```
+
+.Expected Output:
+Only the `dn: ou=People,dc=example,dc=com` entry should be returned, as it's the only one at the base level of that search. No user entries will appear.
+
+.Task 2.2: Perform a one-level search.
+Search only the immediate children of `ou=People,dc=example,dc=com`.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" -s one "(objectClass=*)"
+```
+
+.Expected Output:
+The `jsmith`, `rjohnson`, and `adavis` entries should be returned, as they are direct children of `ou=People`. The `ou=People` entry itself will not be returned.
+
+.Task 2.3: Perform a subtree search (explicitly).
+This confirms the default behavior but explicitly uses the `-s sub` option.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" -s sub "(objectClass=inetOrgPerson)"
+```
+
+.Expected Output:
+The `jsmith`, `rjohnson`, and `adavis` entries should be returned, as they are all under the `ou=People` subtree.
+
+=== Activity 3: Advanced Filter Combinations
+
+This activity explores using logical operators (`&`, `|`, `!`) and wildcards (`*`) in filters.
+
+.Task 3.1: Find users whose `cn` starts with "R" and have a `mail` attribute.
+This combines an equality/wildcard match with an attribute presence check.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(&(cn=R*)(mail=*))"
+```
+
+.Expected Output:
+Only `Robert Johnson` should be returned.
+
+.Task 3.2: Find users named "Jane Smith" OR "Alice Davis".
+This demonstrates using the `|` (OR) operator.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(|(cn=Jane Smith)(cn=Alice Davis))"
+```
+
+.Expected Output:
+The entries for `Jane Smith` and `Alice Davis` should be returned.
+
+.Task 3.3: Find users who are *not* contractors.
+This uses the `!` (NOT) operator to exclude entries based on an attribute value. We defined `adavis` with `employeeType: Contractor`.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(!(employeeType=Contractor))"
+```
+
+.Expected Output:
+`Jane Smith` and `Robert Johnson` should be returned, as they do not have `employeeType=Contractor`. Alice Davis should be excluded.
+
+.Task 3.4: Find entries that are groups OR people.
+This demonstrates filtering by multiple `objectClass` values.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(|(objectClass=groupOfNames)(objectClass=inetOrgPerson))"
+```
+
+.Expected Output:
+All `inetOrgPerson` entries (`jsmith`, `rjohnson`, `adavis`) and all `groupOfNames` entries (`sales`, `marketing`) should be returned.
+
+=== Activity 4: Limiting Returned Attributes
+
+This activity shows how to request only specific attributes to optimize search results.
+
+.Task 4.1: Find all users and return only their `cn`, `uid`, and `mail` attributes.
+This reduces the amount of data transferred and displayed.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(objectClass=inetOrgPerson)" cn uid mail
+```
+
+.Expected Output:
+For each user entry, you will see `dn`, `cn`, `uid`, and `mail` attributes. Other attributes like `sn`, `userPassword`, `description`, etc., will be omitted.
+
+.Task 4.2: Find all users and return *no* attributes (only DNs).
+This is useful for just checking if an entry exists or getting a list of DNs without fetching any data.
+
+```bash
+ldapsearch -x -h localhost -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(objectClass=inetOrgPerson)" 1.1
+```
+
+.Expected Output:
+You will see only the `dn` for `jsmith`, `rjohnson`, and `adavis`. The `1.1` in the `ldapsearch` command is a special OID (Object Identifier) that instructs the server to return no user attributes.
+
+.TIP: Essential Attributes
+By default, `ldapsearch` always returns the `dn` (Distinguished Name) of the entry. If you specify attributes, it will return the `dn` plus your specified attributes. If you want only the DN, use `1.1`.
+
+[[troubleshooting-ldap-searches]]
+== Troubleshooting LDAP Searches
+
+When `ldapsearch` doesn't return the expected results, consider the following:
+
+*   *Check the Base DN:* Is your base DN correct and does it encompass the area where the target entries reside?
+*   *Verify the Scope:* Is the scope (`base`, `one`, `sub`) appropriate for your search? A `base` search won't find children, and a `one` search won't find grandchildren.
+*   *Filter Syntax:* LDAP filter syntax is strict. Ensure all parentheses are balanced, operators are correctly placed (`&` before operands), and attribute names are spelled correctly. A common mistake is `(attribute=value` instead of `(attribute=value)`.
+*   *Attribute Names and Values:* Are you searching for the correct attribute names (e.g., `uid` vs. `cn`)? Are the values case-sensitive if the attribute's matching rule is case-sensitive?
+*   *Permissions (ACIs):* The user you are binding as (`-D`) might not have permission to read the desired entries or attributes. Check your Access Control Instructions (ACIs). If `ldapsearch` returns "Insufficient access" or no results where you expect them, ACIs are a likely culprit.
+*   *Server Logs:* Check the RHDS server's access and error logs (`/var/log/dirsrv/slapd-<instance_name>/access`, `errors`) for any clues about denied operations or search failures.
+
+By understanding the components of an LDAP search and practicing with the `ldapsearch` utility, you can efficiently retrieve precisely the information you need from your Red Hat Directory Server.

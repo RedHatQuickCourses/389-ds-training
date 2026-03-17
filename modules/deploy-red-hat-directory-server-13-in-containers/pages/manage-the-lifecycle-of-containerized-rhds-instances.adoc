@@ -1,0 +1,275 @@
+#  Manage the lifecycle of containerized RHDS instances.
+
+= Manage the Lifecycle of Containerized RHDS Instances
+
+This section focuses on the essential administrative tasks involved in managing the lifecycle of Red Hat Directory Server (RHDS) instances deployed within Podman containers. Understanding these operations is crucial for maintaining the availability, health, and scalability of your containerized directory services.
+
+== Overview of Container Lifecycle Management
+
+Container lifecycle management refers to the complete set of operations that control the state of a container from its creation to its removal. For containerized RHDS instances, this includes starting, stopping, restarting, inspecting, viewing logs, and ultimately removing the container. These operations are typically performed using the `podman` command-line interface.
+
+Effectively managing container lifecycles ensures that your RHDS instances are running when needed, can be gracefully shut down for maintenance or updates, and can be efficiently restarted if issues arise. It also enables resource management by allowing you to stop unused containers and clean up stale ones.
+
+== Key Podman Commands for Lifecycle Management
+
+The following `podman` commands are fundamental for managing containerized RHDS instances:
+
+*   `` `podman ps` ``: List running containers.
+*   `` `podman ps -a` ``: List all containers (running and stopped).
+*   `` `podman start <container-name-or-id>` ``: Start one or more stopped containers.
+*   `` `podman stop <container-name-or-id>` ``: Stop one or more running containers.
+*   `` `podman restart <container-name-or-id>` ``: Stop and then start one or more containers.
+*   `` `podman rm <container-name-or-id>` ``: Remove one or more stopped containers.
+*   `` `podman inspect <container-name-or-id>` ``: Display detailed information about a container.
+*   `` `podman logs <container-name-or-id>` ``: Fetch the logs of a container.
+
+== Starting a Containerized RHDS Instance
+
+When an RHDS container is initially created using `podman run`, it typically starts immediately. However, if a container has been stopped, you'll need to explicitly start it. Starting a container brings it from a stopped state back to a running state, allowing the RHDS service within it to become active again.
+
+=== Hands-on Lab: Starting an RHDS Container
+
+In this lab, you will start a previously stopped RHDS container.
+
+.Prerequisites
+Ensure you have a stopped RHDS container from a previous lab (e.g., named `rhds-instance-1`). If you don't, you can quickly create and stop one:
+[source,bash]
+----
+podman run -d --name rhds-instance-1 -p 389:389 -p 636:636 registry.redhat.io/rhel9/389-ds:1.3.14
+podman stop rhds-instance-1
+----
+
+.Steps
+. *Verify the container's status:*
+  Before starting, confirm that your `rhds-instance-1` container is indeed stopped.
+  [source,bash]
+  ----
+  podman ps -a
+  ----
+  You should see `Exited` in the `STATUS` column for `rhds-instance-1`.
+
+. *Start the RHDS container:*
+  Use the `podman start` command followed by the container's name.
+  [source,bash]
+  ----
+  podman start rhds-instance-1
+  ----
+  You should see the container's name or ID echoed back.
+
+. *Verify the container is running:*
+  Check the container's status again to ensure it's now running.
+  [source,bash]
+  ----
+  podman ps
+  ----
+  You should see `Up ...` in the `STATUS` column for `rhds-instance-1`.
+
+== Stopping a Containerized RHDS Instance
+
+Stopping a container sends a `SIGTERM` signal to the main process running inside the container (in this case, the RHDS server). This allows the service to shut down gracefully, saving its state and preventing data corruption. If the service does not respond to `SIGTERM` within a grace period (default 10 seconds), a `SIGKILL` is sent to force termination.
+
+=== Hands-on Lab: Stopping an RHDS Container
+
+This lab demonstrates how to stop a running RHDS container.
+
+.Prerequisites
+Ensure your `rhds-instance-1` container is running. If not, start it using `podman start rhds-instance-1`.
+
+.Steps
+. *Verify the container is running:*
+  Confirm that `rhds-instance-1` is currently active.
+  [source,bash]
+  ----
+  podman ps
+  ----
+
+. *Stop the RHDS container:*
+  Execute the `podman stop` command.
+  [source,bash]
+  ----
+  podman stop rhds-instance-1
+  ----
+  The command will output the container's name or ID.
+
+. *Verify the container's status:*
+  Check `podman ps -a` to see that the container's status has changed to `Exited`.
+  [source,bash]
+  ----
+  podman ps -a
+  ----
+  The `STATUS` column for `rhds-instance-1` should now show `Exited (...)`.
+
+== Restarting a Containerized RHDS Instance
+
+Restarting a container is a convenient way to stop a running container and then start it again with a single command. This is useful for applying configuration changes that require a service restart or for simply refreshing the container's state.
+
+=== Hands-on Lab: Restarting an RHDS Container
+
+In this lab, you will restart a running RHDS container.
+
+.Prerequisites
+Ensure your `rhds-instance-1` container is running. If not, start it using `podman start rhds-instance-1`.
+
+.Steps
+. *Verify the container is running:*
+  [source,bash]
+  ----
+  podman ps
+  ----
+
+. *Restart the RHDS container:*
+  [source,bash]
+  ----
+  podman restart rhds-instance-1
+  ----
+  You will see the container's name or ID printed, indicating the restart process has begun.
+
+. *Verify the container is running again:*
+  After a short delay for the restart, confirm its status.
+  [source,bash]
+  ----
+  podman ps
+  ----
+  The `STATUS` column for `rhds-instance-1` should again show `Up ...`.
+
+== Removing a Containerized RHDS Instance
+
+Removing a container deletes its writable layer and all associated metadata, effectively cleaning up the container from your system. This operation can only be performed on stopped containers. If you try to remove a running container, `podman` will typically return an error unless you use the force (`-f`) option, which will stop and then remove it.
+
+NOTE: Removing a container does *not* delete any volumes (like persistent storage for RHDS data) that were explicitly created and attached to the container. You must remove volumes separately if they are no longer needed, using `podman volume rm`.
+
+=== Hands-on Lab: Removing an RHDS Container
+
+This lab demonstrates how to remove a stopped RHDS container.
+
+.Prerequisites
+Ensure your `rhds-instance-1` container is stopped. If it's running, stop it first: `podman stop rhds-instance-1`.
+
+.Steps
+. *Verify the container is stopped:*
+  [source,bash]
+  ----
+  podman ps -a
+  ----
+  Ensure `rhds-instance-1` shows `Exited`.
+
+. *Remove the RHDS container:*
+  [source,bash]
+  ----
+  podman rm rhds-instance-1
+  ----
+  The command will output the container's name or ID upon successful removal.
+
+. *Verify the container is removed:*
+  Check the list of all containers; `rhds-instance-1` should no longer appear.
+  [source,bash]
+  ----
+  podman ps -a
+  ----
+  You should not see `rhds-instance-1` in the output.
+
+== Inspecting a Containerized RHDS Instance
+
+The `podman inspect` command provides a wealth of detailed, low-level information about a container's configuration and state in JSON format. This includes network settings, mounted volumes, port mappings, command-line arguments, environment variables, and more. It's an invaluable tool for troubleshooting and understanding how a container is configured.
+
+=== Hands-on Lab: Inspecting an RHDS Container
+
+In this lab, you will inspect an RHDS container to view its detailed configuration.
+
+.Prerequisites
+Ensure you have an RHDS container. If you removed `rhds-instance-1`, create a new one:
+[source,bash]
+----
+podman run -d --name rhds-instance-1 -p 389:389 -p 636:636 -v rhds-data:/var/lib/dirsrv registry.redhat.io/rhel9/389-ds:1.3.14
+----
+
+.Steps
+. *Inspect the RHDS container:*
+  Use `podman inspect` followed by the container's name. You can pipe the output to `less` or `jq` for easier reading.
+  [source,bash]
+  ----
+  podman inspect rhds-instance-1 | less
+  ----
+  Press `q` to exit `less`.
+
+. *Extract specific information (optional):*
+  You can use `jq` to filter the JSON output for specific details, such as network settings or mount points.
+  [source,bash]
+  ----
+  podman inspect rhds-instance-1 | jq '.[].NetworkSettings.Ports'
+  podman inspect rhds-instance-1 | jq '.[].Mounts'
+  ----
+  This will display the mapped ports and volume mounts for your container.
+
+== Viewing Container Logs for RHDS
+
+Container logs are essential for monitoring the health of your RHDS instance, diagnosing issues, and understanding its behavior. The `podman logs` command retrieves the standard output and standard error streams from a container. The RHDS server typically writes its operational logs to these streams when running in a container, making them easily accessible.
+
+=== Hands-on Lab: Viewing RHDS Container Logs
+
+This lab will show you how to access the logs of your containerized RHDS instance.
+
+.Prerequisites
+Ensure your `rhds-instance-1` container is running.
+
+.Steps
+. *View the complete logs:*
+  [source,bash]
+  ----
+  podman logs rhds-instance-1
+  ----
+  This will print all accumulated logs from the container's startup.
+
+. *View the last few log entries:*
+  The `-t` option adds timestamps, and `-n` specifies the number of lines.
+  [source,bash]
+  ----
+  podman logs -t -n 20 rhds-instance-1
+  ----
+  This is useful for quickly seeing recent activity.
+
+. *Stream logs in real-time (follow):*
+  The `-f` or `--follow` option allows you to continuously watch the logs as they are generated, similar to `tail -f`.
+  [source,bash]
+  ----
+  podman logs -f rhds-instance-1
+  ----
+  To stop following logs, press `Ctrl+C`. This is invaluable for troubleshooting active issues.
+
+== Listing Containers
+
+Listing containers is a fundamental operation to see what containers are running or have been created on your system.
+
+*   `` `podman ps` ``: Displays only *running* containers.
+*   `` `podman ps -a` `` (or `--all`): Displays *all* containers, including those that are stopped or exited.
+
+=== Hands-on Lab: Listing Containers
+
+.Steps
+. *List running containers:*
+  [source,bash]
+  ----
+  podman ps
+  ----
+  You should see your `rhds-instance-1` (if running).
+
+. *List all containers:*
+  [source,bash]
+  ----
+  podman ps -a
+  ----
+  This will show `rhds-instance-1` whether it's running or stopped, along with any other containers that exist on your system.
+
+. *Filter containers (optional):*
+  You can filter output based on various criteria using `--filter`. For example, to find containers by name:
+  [source,bash]
+  ----
+  podman ps -a --filter name=rhds-instance-1
+  ----
+  Or by status:
+  [source,bash]
+  ----
+  podman ps -a --filter status=exited
+  ----
+
+By mastering these lifecycle management commands, you gain full control over your containerized Red Hat Directory Server deployments, enabling efficient administration and troubleshooting.

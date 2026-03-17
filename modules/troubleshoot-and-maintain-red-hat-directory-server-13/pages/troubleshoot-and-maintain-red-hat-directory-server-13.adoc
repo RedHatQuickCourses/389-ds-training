@@ -1,0 +1,5 @@
+#  Troubleshoot and Maintain Red Hat Directory Server 13
+
+* xref:troubleshoot-and-maintain-red-hat-directory-server-13.adoc[Troubleshoot and Maintain Red Hat Directory Server 13]
+** Learn to diagnose common RHDS issues using various tools and analyze log files for insights.
+** Implement performance tuning, robust backup and restore procedures, and utilize utilities for routine maintenance tasks.

@@ -1,0 +1,284 @@
+#  Define and apply recommended cipher suites for strong encryption.
+
+= Define and apply recommended cipher suites for strong encryption
+:navtitle: Cipher Suites
+
+Red Hat Directory Server (RHDS) plays a critical role in an enterprise's identity infrastructure, often storing sensitive user and group information. Ensuring the confidentiality and integrity of communication between clients and the directory server is paramount. This is primarily achieved through the implementation of Transport Layer Security (TLS), which relies on *cipher suites* to define the cryptographic algorithms used for secure communication.
+
+In this section, we will delve into the intricacies of cipher suites, understand their importance for robust security, identify recommended practices for their configuration, and perform a hands-on lab to apply these settings within your RHDS 13 environment.
+
+== Introduction to Cipher Suites
+
+When a client initiates a secure connection to a server (e.g., an LDAP client connecting to RHDS via LDAPS), they engage in a TLS handshake. During this handshake, both parties negotiate the specific cryptographic algorithms they will use for that session. This collection of algorithms, agreed upon by both client and server, is known as a *cipher suite*.
+
+=== What are Cipher Suites?
+
+A cipher suite is a set of algorithms that specifies how a secure connection will be established and maintained. Each cipher suite typically includes algorithms for four key aspects of the TLS handshake and subsequent data exchange:
+
+1.  *Key Exchange Algorithm*: Determines how the client and server agree on a shared secret key for encryption. Examples include Diffie-Hellman (DH), Elliptic Curve Diffie-Hellman (ECDH), and RSA.
+2.  *Authentication Algorithm*: Used to authenticate the server (and optionally the client) to prove their identity. This typically involves digital certificates and algorithms like RSA, DSA, or ECDSA.
+3.  *Encryption Algorithm*: Specifies the symmetric algorithm used to encrypt the actual data being exchanged. Examples include AES (Advanced Encryption Standard) with various key sizes (e.g., AES128, AES256) and modes (e.g., GCM, CBC), or ChaCha20.
+4.  *Integrity (Message Authentication Code - MAC) Algorithm*: Provides data integrity by ensuring that the transmitted data has not been tampered with. Examples include SHA-256 or SHA-384.
+
+A typical cipher suite name follows a standardized format, often reflecting these components. For example:
+
+`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`
+
+Let's break down this example:
+
+*   `TLS`: Indicates the protocol (Transport Layer Security).
+*   `ECDHE`: Key Exchange algorithm (Elliptic Curve Diffie-Hellman Ephemeral). The "Ephemeral" part is crucial for Perfect Forward Secrecy.
+*   `RSA`: Authentication algorithm (RSA digital signature).
+*   `AES_256_GCM`: Encryption algorithm (Advanced Encryption Standard with a 256-bit key in Galois/Counter Mode).
+*   `SHA384`: Integrity (MAC) algorithm (Secure Hash Algorithm 384).
+
+=== Why Strong Cipher Suites Matter
+
+The strength of your secure communication is directly dependent on the strength of the cipher suites you allow. Weak or outdated cipher suites can expose your RHDS instance to various cryptographic attacks, including:
+
+*   *Brute-force attacks*: Against weak encryption keys.
+*   *Man-in-the-middle attacks*: Where an attacker intercepts and potentially modifies communication.
+*   *Downgrade attacks*: Where an attacker forces the client and server to negotiate a weaker, less secure cipher suite, even if stronger ones are available.
+
+==== Perfect Forward Secrecy (PFS)
+
+A critical concept for strong encryption is *Perfect Forward Secrecy (PFS)*. PFS ensures that if a server's long-term private key is compromised in the future, past recorded communications encrypted with that key cannot be decrypted. This is achieved by using *ephemeral* (temporary) session keys for each connection, which are derived uniquely for that session and then discarded.
+
+Cipher suites that include `DHE` (Diffie-Hellman Ephemeral) or `ECDHE` (Elliptic Curve Diffie-Hellman Ephemeral) in their key exchange algorithm support PFS and are highly recommended. Conversely, cipher suites that rely solely on static RSA key exchange do *not* provide PFS and should generally be avoided for new deployments.
+
+=== Recommended Cipher Suites for RHDS
+
+When defining recommended cipher suites, the goal is to disable weak, insecure, and obsolete options while enabling only strong, modern algorithms that provide robust security and PFS.
+
+General guidelines for recommended cipher suites:
+
+*   **Prioritize TLS 1.2 and TLS 1.3**: RHDS 13 supports TLS 1.2 and TLS 1.3. TLS 1.3 offers significant security and performance improvements, including a simplified handshake and mandatory PFS.
+*   **Use Ephemeral Diffie-Hellman Key Exchange**: Prefer `ECDHE` or `DHE` for Perfect Forward Secrecy.
+*   **Strong Symmetric Encryption**: Use `AES_256_GCM` or `AES_128_GCM`. Avoid `CBC` modes where possible, and definitely avoid older algorithms like `3DES`, `RC4`, or `DES`.
+*   **Strong Hashing for Integrity**: Use `SHA256` or `SHA384`. Avoid `SHA1` or `MD5`.
+*   **Disable Null, Anonymous, and Export Ciphers**: These offer little to no security.
+
+Here's an example of a robust cipher suite configuration string that prioritizes strong, modern cipher suites:
+
+```
+-ALL +TLS_AES_256_GCM_SHA384 +TLS_CHACHA20_POLY1305_SHA256 +TLS_AES_128_GCM_SHA256
+```
+
+This configuration string (used by NSS, the cryptographic library RHDS uses) means:
+
+*   `-ALL`: Disable all default cipher suites.
+*   `+TLS_AES_256_GCM_SHA384`: Enable this specific TLS 1.3 cipher suite.
+*   `+TLS_CHACHA20_POLY1305_SHA256`: Enable this specific TLS 1.3 cipher suite (good for performance on some architectures).
+*   `+TLS_AES_128_GCM_SHA256`: Enable this specific TLS 1.3 cipher suite.
+
+For TLS 1.2, you might see similar patterns, for example:
+
+```
+-ALL:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256
+```
+(Note: The exact syntax can vary slightly depending on the underlying cryptographic library and the tool used to configure it. RHDS uses NSS, so its string format is generally specific to NSS.)
+
+*Important Note*: Always refer to the latest Red Hat documentation and security advisories for the most up-to-date recommended cipher suites, as cryptographic best practices evolve over time.
+
+== Configuring Cipher Suites in Red Hat Directory Server 13
+
+RHDS uses the Network Security Services (NSS) library for its cryptographic operations. Cipher suites are configured using the `dsconf` command-line utility, which modifies the `nsslapd-security-ciphers` attribute in the server's configuration. It's also critical to set a minimum TLS protocol version to prevent downgrade attacks.
+
+The relevant attributes are:
+
+*   `nsslapd-security-ciphers`: Defines the list of allowed cipher suites.
+*   `nsslapd-security-protocol-min`: Sets the minimum TLS protocol version (e.g., `TLS1.2` or `TLS1.3`).
+
+=== Hands-on Lab: Configuring and Verifying RHDS Cipher Suites
+
+This lab guides you through the process of viewing, configuring, and verifying recommended cipher suites for your RHDS 13 instance.
+
+==== Objectives
+
+*   Learn how to view the currently configured cipher suites in RHDS.
+*   Understand how to set a minimum TLS protocol version.
+*   Apply a set of recommended cipher suites using `dsconf`.
+*   Verify the new cipher suite configuration.
+
+==== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance on RHEL 9.
+*   Command-line access to the RHDS server with root or `dsadm` privileges.
+*   Basic familiarity with `dsconf` and `ldapsearch`.
+*   The `ldapsearch` client utility installed on the client machine or server for testing.
+
+==== Lab Steps
+
+. xref:lab-step-1[View Current Cipher Suites]
+. xref:lab-step-2[Backup Current RHDS Configuration]
+. xref:lab-step-3[Configure Recommended Cipher Suites]
+. xref:lab-step-4[Restart the RHDS Instance]
+. xref:lab-step-5[Verify Configured Cipher Suites]
+. xref:lab-step-6[Test Client Connection with Specific Cipher Suites] (Optional Advanced)
+
+[#lab-step-1]
+===== Step 1: View Current Cipher Suites
+
+First, let's examine the default or currently configured cipher suites and the minimum protocol version for your RHDS instance.
+
+. Open a terminal on your RHDS server.
+. Use `dsconf` to view the `nsslapd-security-ciphers` and `nsslapd-security-protocol-min` attributes. Replace `instance_name` with the actual name of your RHDS instance (e.g., `ds01`).
+
++
+```bash
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name security get
+```
+
+. This command will output various security-related settings. Look for `nsslapd-security-ciphers` and `nsslapd-security-protocol-min`.
+
++
+[source,text]
+----
+# Example Output (may vary)
+...
+nsslapd-security-ciphers: <default_cipher_string>
+nsslapd-security-protocol-min: TLS1.2
+...
+----
+
++
+Alternatively, you can query specific attributes:
+
++
+```bash
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name security get nsslapd-security-ciphers
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name security get nsslapd-security-protocol-min
+```
+
+[#lab-step-2]
+===== Step 2: Backup Current RHDS Configuration
+
+Before making changes, it's always good practice to back up your current configuration.
+
+. Export the current RHDS configuration to an LDIF file. This allows for easy rollback if needed.
+
++
+```bash
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name config export > /root/rhds_config_backup_ciphers.ldif
+```
+
+[#lab-step-3]
+===== Step 3: Configure Recommended Cipher Suites
+
+Now, let's apply a set of recommended cipher suites and set the minimum TLS protocol to `TLS1.2` or `TLS1.3`. For this lab, we will target TLS 1.3 preferred ciphers, falling back to strong TLS 1.2 ones if necessary.
+
+. Define a strong cipher suite string. We'll use a combination that prioritizes TLS 1.3 and strong TLS 1.2 ciphers.
+
++
+[source,text]
+----
+# This string prioritizes TLS 1.3 ciphers, then strong TLS 1.2 ECDHE/DHE ciphers.
+# Always review current Red Hat recommendations for the most secure and compatible list.
+CIPHER_STRING="-ALL:!NULL:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA:!ARIA:!SEED:!3DES:!SHA1:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:DHE-RSA-AES128-GCM-SHA256"
+# Note: For strict TLS 1.3 only, the string would be shorter, e.g.,
+# CIPHER_STRING="-ALL +TLS_AES_256_GCM_SHA384 +TLS_CHACHA20_POLY1305_SHA256 +TLS_AES_128_GCM_SHA256"
+# However, this might break compatibility with older clients that only support TLS 1.2.
+# The longer string allows for graceful fallback to strong TLS 1.2 ciphers.
+----
+
++
+. Set the `nsslapd-security-ciphers` attribute using `dsconf`.
+
++
+```bash
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name security set --ciphers "$CIPHER_STRING"
+```
+
+. Set the `nsslapd-security-protocol-min` attribute to `TLS1.2` (or `TLS1.3` if your environment exclusively supports it). For broader compatibility while still maintaining strong security, `TLS1.2` is often a good minimum.
+
++
+```bash
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name security set --protocol-min TLS1.2
+```
+
+[#lab-step-4]
+===== Step 4: Restart the RHDS Instance
+
+Changes to SSL/TLS settings, including cipher suites and protocol versions, often require a restart of the RHDS instance to take effect.
+
+. Use `dsctl` to restart your RHDS instance.
+
++
+```bash
+# dsctl instance_name restart
+```
+
++
+Wait for the instance to restart successfully.
+
+[#lab-step-5]
+===== Step 5: Verify Configured Cipher Suites
+
+After the restart, verify that your new cipher suite settings have been applied correctly.
+
+. Query the `nsslapd-security-ciphers` and `nsslapd-security-protocol-min` attributes again using `dsconf`.
+
++
+```bash
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name security get nsslapd-security-ciphers
+# dsconf -D "cn=Directory Manager" ldap://localhost -i instance_name security get nsslapd-security-protocol-min
+```
+
++
+Confirm that the output matches the `CIPHER_STRING` you provided and `TLS1.2` (or `TLS1.3`) for the minimum protocol.
+
+. You can also use a tool like `nmap` with the `ssl-enum-ciphers` script (if installed) or `openssl s_client` from a client machine to confirm which cipher suites the server is now offering.
+
++
+From a client machine (replace `rhds.example.com` with your RHDS hostname and `636` with your LDAPS port):
+
++
+```bash
+# nmap -p 636 --script ssl-enum-ciphers rhds.example.com
+```
+
++
+Or using `openssl s_client` to test connection and see negotiated cipher:
+
++
+```bash
+# openssl s_client -connect rhds.example.com:636 -tls1_2 # For TLS 1.2
+# openssl s_client -connect rhds.example.com:636 -tls1_3 # For TLS 1.3
+```
+
++
+Look for the `Cipher` and `Protocol` lines in the `openssl` output.
+
+[#lab-step-6]
+===== Step 6: Test Client Connection with Specific Cipher Suites (Optional Advanced)
+
+To rigorously test your configuration, you can try to connect to RHDS with `ldapsearch` while explicitly restricting the client to *only* use a weak or disallowed cipher suite. This test should *fail* if your RHDS configuration is correct.
+
+. Attempt to connect using a known weak cipher suite (e.g., `DES`) that should now be disabled.
+
++
+```bash
+# export LDAPS_CIPHER="DES-CBC3-SHA" # This is a weak cipher suite
+# ldapsearch -H ldaps://rhds.example.com:636 -D "cn=Directory Manager" -W -s base -b "" objectclass=*
+```
+
++
+You should expect this command to fail with an SSL/TLS error, indicating that the server rejected the weak cipher suite. This confirms that your configuration is enforcing strong ciphers.
+
++
+. Clear the `LDAPS_CIPHER` environment variable after testing:
+
++
+```bash
+# unset LDAPS_CIPHER
+```
+
+This concludes the lab on configuring and verifying cipher suites for Red Hat Directory Server. By carefully selecting and enforcing strong cipher suites, you significantly enhance the security posture of your directory service.
+
+== Troubleshooting Cipher Suite Issues
+
+*   **Connection failures**: If clients suddenly cannot connect after changing cipher suites, check the RHDS `errors` log (`/var/log/dirsrv/slapd-instance_name/errors`) for TLS-related errors. Common issues include unsupported ciphers by the client, or a mismatch in protocol versions.
+*   **Too restrictive**: If your `nsslapd-security-ciphers` string is too strict, older but still supported clients might fail to connect. Consider a balance between security and compatibility for your environment.
+*   **Syntax errors**: Incorrect syntax in the cipher string can prevent RHDS from starting or applying the configuration. Always double-check the string format.
+*   **NSS compatibility**: Remember RHDS uses NSS. The cipher string syntax is specific to NSS. Resources like the Mozilla SSL Configuration Generator (for Nginx/Apache/HAProxy usually, but gives good cipher string examples to adapt) or official Red Hat documentation for NSS-based applications are valuable.
+*   **Restart required**: Most SSL/TLS configuration changes require an RHDS instance restart to take effect.

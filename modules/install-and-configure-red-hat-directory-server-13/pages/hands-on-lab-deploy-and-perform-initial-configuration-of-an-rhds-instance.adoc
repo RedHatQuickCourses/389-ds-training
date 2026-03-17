@@ -1,0 +1,385 @@
+#  Hands-on Lab: Deploy and perform initial configuration of an RHDS instance.
+
+= Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
+:navtitle: Lab: Deploy RHDS
+:page-aliases: rhds-labs:initial-deploy-lab.adoc
+
+// This Antora AsciiDoc file outlines a practical, hands-on lab activity focused on the initial deployment and configuration of Red Hat Directory Server 13.
+// It aligns with the "Install and Configure Red Hat Directory Server 13" module's objectives.
+
+== Hands-on Lab: Deploy and Perform Initial Configuration of an RHDS Instance
+
+This hands-on lab guides you through the fundamental steps of deploying and performing the initial configuration of a Red Hat Directory Server (RHDS) 13 instance on a Red Hat Enterprise Linux 9 system. You will gain practical experience in installing the necessary packages, creating a new directory server instance, applying basic configuration settings, and managing its operational lifecycle. This foundational knowledge is crucial for any further administration or integration tasks with RHDS.
+
+=== Learning Objectives
+
+Upon successful completion of this lab, you will be able to:
+
+*   Identify and install the required RHDS 13 packages on a RHEL 9 system.
+*   Create a new RHDS 13 instance using the `dscreate` utility, configuring essential parameters such as instance name, suffixes, and administrative credentials.
+*   Perform basic configuration tasks using `dsconf`, including setting a server description and adding additional suffixes to the directory.
+*   Manage the RHDS instance lifecycle (start, stop, restart, and status checks) using the `dsctl` utility.
+*   Verify the operational status and basic data access of your newly deployed RHDS instance using `ldapsearch`.
+
+=== Prerequisites
+
+Before you begin this lab, ensure you have:
+
+*   A Red Hat Enterprise Linux 9 (RHEL 9) system with an active Red Hat subscription, allowing access to the necessary software repositories.
+*   `root` or `sudo` privileges on the RHEL 9 system to perform package installations and system-level configurations.
+*   Internet connectivity on your RHEL 9 system to download necessary packages from Red Hat repositories.
+*   Basic familiarity with the Linux command line interface (CLI).
+
+=== Lab Environment Setup
+
+The following steps assume you are performing these commands as a user with `sudo` privileges.
+
+.Access the command line on your RHEL 9 system.
+
+.Create a file for securely storing the Directory Manager password. This method is recommended for automation and avoids exposing the password in shell history or typing it repeatedly, enhancing security and efficiency for command-line tools.
++
+[source,bash]
+----
+echo "your_directory_manager_password" > ~/.pwd_file
+chmod 600 ~/.pwd_file
+----
++
+IMPORTANT: Replace `your_directory_manager_password` with a strong, complex password of your choice. Ensure this password is kept confidential. The `chmod 600` command restricts file permissions, allowing only the file's owner to read or write to it.
+
+==== Step 1: Prepare the System and Install RHDS Packages
+
+To deploy Red Hat Directory Server 13, you must first install the core `389-ds-base` package. The `389-ds-base-legacy-tools` package is also highly recommended as it provides essential command-line utilities like `dsconf`, `dsctl`, and `dsidm` for managing your RHDS instances.
+
+.Enable the AppStream repository, which is where the RHDS packages are located for RHEL 9.
++
+[source,bash]
+----
+sudo subscription-manager repos --enable rhel-9-for-x86_64-appstream-rpms
+----
++
+This command ensures your system can access the correct Red Hat repository to download the software.
+
+.Install the required RHDS packages using `dnf`.
++
+[source,bash]
+----
+sudo dnf install -y 389-ds-base 389-ds-base-legacy-tools
+----
++
+The `-y` flag automates confirmation of the installation process.
+
+.Verify the installation by checking the version of a key RHDS utility, such as `dscreate`.
++
+[source,bash]
+----
+dscreate --version
+----
++
+Expected Output (version numbers may vary, confirming the tool is installed):
++
+[source,text]
+----
+389-ds-base 2.4.x
+----
++
+This confirms that the RHDS base packages and utilities are successfully installed on your system.
+
+==== Step 2: Create and Initialize a New RHDS Instance
+
+The `dscreate` utility is the primary tool for creating and initializing new RHDS instances. It handles the creation of necessary directory structures, configuration files, and the initial database, streamlining the deployment process. You can use it in interactive mode or provide all options on the command line.
+
+.Create a new RHDS instance interactively using `dscreate`. This method guides you through each required parameter.
++
+[source,bash]
+----
+sudo dscreate ds create
+----
++
+When prompted, provide the following details. For prompts not listed, you can generally accept the default value unless you have a specific reason to change it.
++
+[cols="1,2,3",options="header"]
+|===
+| Prompt | Suggested Value | Explanation
+| Full path to the instance directory | `/etc/dirsrv/slapd-myinstance` | This specifies the unique directory where your RHDS instance's configuration and data will reside. Using `myinstance` makes it easy to identify.
+| System user to run the server | `dirsrv` | This is the default, unprivileged system user under which the directory server process will run, adhering to security best practices.
+| System group to run the server | `dirsrv` | The default system group associated with the `dirsrv` user.
+| Server ID | `myinstance` | A unique identifier for this specific RHDS instance. This name will be used with `dsctl` and `dsconf` to manage the instance.
+| LDAP port | `389` | The standard, unencrypted LDAP port. Ensure this port is not in use by another service.
+| LDAPS port | `636` | The standard SSL/TLS encrypted LDAP port. This will be used for secure communication.
+| Suffix (or base DN) | `dc=example,dc=com` | This defines the root of your directory information tree (DIT). It's the highest point in your directory structure.
+| Directory Manager DN | `cn=Directory Manager` | The distinguished name (DN) of the superuser account for administering the directory.
+| Directory Manager password | `your_directory_manager_password` | *Enter the exact same password you stored in the `~/.pwd_file`.*
+| Host name of the system | `$(hostname -f)` | Use your system's fully qualified domain name (FQDN). This is crucial for proper certificate generation and network resolution.
+| Register with certmonger | `no` | For this initial lab, we'll bypass automatic certificate management.
+| Start server after creation | `yes` | Choose to start the instance immediately after creation to proceed with verification and configuration.
+| Write to a file? | `no` | For interactive setup, we don't need to save the configuration to a file.
+|===
++
+NOTE: For experienced users or automation, `dscreate` also supports non-interactive instance creation by providing all options directly on the command line. For instance:
++
+[source,bash]
+----
+sudo dscreate ds create \
+  --instance-name myinstance \
+  --suffix dc=example,dc=com \
+  --ldap-port 389 \
+  --ldaps-port 636 \
+  --root-dn "cn=Directory Manager" \
+  --root-password-file ~/.pwd_file \
+  --server-id myinstance \
+  --host-name $(hostname -f) \
+  --start \
+  --no-create-certs
+----
++
+This non-interactive command *will* start the server, so you don't need an extra start command. For this lab, the interactive approach is recommended for clarity unless you are comfortable with all the available command-line flags.
+
+.Verify that the newly created RHDS instance is running. If you chose to start the server after creation, this command will confirm its status.
++
+[source,bash]
+----
+sudo dsctl instance myinstance status
+----
++
+Expected Output:
++
+[source,text]
+----
+Instance "myinstance" is running
+----
++
+If the instance is not running, review the `dscreate` output for any errors or consult the troubleshooting section.
+
+==== Step 3: Perform Basic Configuration using `dsconf`
+
+The `dsconf` utility is a powerful command-line tool for configuring various server-wide and instance-specific parameters of Red Hat Directory Server. In this step, you will use `dsconf` to set a descriptive name for your server and add an additional suffix (or base DN), demonstrating how to manage directory structure.
+
+.Set a server-wide description for your RHDS instance. This description can help identify the purpose or environment of the server, especially in a multi-server deployment.
++
+[source,bash]
+----
+sudo dsconf -D "cn=Directory Manager" -w ~/.pwd_file instance myinstance set server-description="Red Hat Directory Server 13 - Lab Instance"
+----
++
+*   `-D "cn=Directory Manager"`: Specifies the Directory Manager DN for authentication.
+*   `-w ~/.pwd_file`: Directs `dsconf` to read the password from the specified file.
+*   `instance myinstance`: Targets the specific RHDS instance named `myinstance`.
+*   `set server-description="..."`: Sets the `server-description` attribute.
+
+.Add a new suffix (database) to your RHDS instance. Multiple suffixes allow you to logically separate different sets of directory data within a single server, improving organization and potentially performance.
++
+[source,bash]
+----
+sudo dsconf -D "cn=Directory Manager" -w ~/.pwd_file instance myinstance add-suffix "dc=training,dc=example,dc=com"
+----
++
+This command creates a new, empty suffix `dc=training,dc=example,dc=com`.
+
+.Verify that the new suffix has been successfully added to your RHDS instance.
++
+[source,bash]
+----
+sudo dsconf -D "cn=Directory Manager" -w ~/.pwd_file instance myinstance suffix list
+----
++
+Expected Output (should show both suffixes you've configured):
++
+[source,text]
+----
+dc=example,dc=com
+dc=training,dc=example,dc=com
+----
+
+==== Step 4: Manage RHDS Instance Lifecycle with `dsctl`
+
+The `dsctl` utility is the primary command-line tool for managing the operational lifecycle of RHDS instances. This includes starting, stopping, restarting, and checking the status of your directory server instances.
+
+.Stop the `myinstance` RHDS instance. Stopping the server is necessary for certain configuration changes or maintenance tasks.
++
+[source,bash]
+----
+sudo dsctl -D "cn=Directory Manager" -w ~/.pwd_file instance myinstance stop
+----
+
+.Verify that the instance has successfully stopped.
++
+[source,bash]
+----
+sudo dsctl instance myinstance status
+----
++
+Expected Output:
++
+[source,text]
+----
+Instance "myinstance" is stopped
+----
+
+.Start the `myinstance` RHDS instance. Once maintenance or configuration changes are complete, you can restart the server.
++
+[source,bash]
+----
+sudo dsctl -D "cn=Directory Manager" -w ~/.pwd_file instance myinstance start
+----
+
+.Verify that the instance is running again after being started.
++
+[source,bash]
+----
+sudo dsctl instance myinstance status
+----
++
+Expected Output:
++
+[source,text]
+----
+Instance "myinstance" is running
+----
+
+.Restart the `myinstance` RHDS instance. The `restart` command is a convenient way to apply configuration changes that require a server restart without explicitly stopping and starting the instance.
++
+[source,bash]
+----
+sudo dsctl -D "cn=Directory Manager" -w ~/.pwd_file instance myinstance restart
+----
+
+.Verify the instance is running after the restart operation.
++
+[source,bash]
+----
+sudo dsctl instance myinstance status
+----
++
+This demonstrates your ability to control the RHDS instance's operational state.
+
+==== Step 5: Verify the RHDS Instance Using `ldapsearch`
+
+With your RHDS instance deployed and configured, it's essential to confirm its basic functionality and accessibility. The `ldapsearch` command-line utility is a powerful tool for querying LDAP directories and is invaluable for verification and troubleshooting.
+
+.Perform a base search to retrieve the `namingContexts` attribute. This attribute lists all the suffixes (base DNs) configured and available on the directory server.
++
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 -b "" -s base "(objectclass=*)" namingContexts
+----
++
+*   `-x`: Use simple authentication.
+*   `-H ldap://localhost:389`: Connect to the LDAP server on `localhost` using port `389`.
+*   `-b ""`: Perform a base search on the root DSE (Directory Service Entry).
+*   `-s base`: Specify the search scope as `baseObject` (only the base DN itself).
+*   `"(objectclass=*)"`: A filter that matches all objects.
+*   `namingContexts`: Request the `namingContexts` attribute.
++
+Expected Output (truncated, showing your configured suffixes):
++
+[source,text]
+----
+# extended LDIF
+#
+# LDAPv3
+# base <> with scope baseObject
+# filter: (objectclass=*)
+# requesting: namingContexts
+#
+
+dn:
+namingContexts: dc=example,dc=com
+namingContexts: dc=training,dc=example,dc=com
+# ... other standard namingContexts typically present ...
+
+# search result
+search: 2
+result: 0 Success
+
+# numResponses: 2
+# numEntries: 1
+----
++
+This output confirms that both `dc=example,dc=com` and `dc=training,dc=example,dc=com` suffixes are correctly configured and accessible on your RHDS instance.
+
+.Perform a more specific search within your primary suffix, authenticating as the Directory Manager. This verifies that you can bind to the directory and query data within a specific base DN.
++
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectclass=*)"
+----
++
+*   `-D "cn=Directory Manager"`: Authenticate as the Directory Manager.
+*   `-W`: Prompt for the password (alternatively, you could use `-w ~/.pwd_file`).
+*   `-b "dc=example,dc=com"`: Set the search base to your primary suffix.
++
+When prompted for the LDAP password, enter the Directory Manager password you set earlier.
++
+Expected Output (truncated, showing the base entry of the `dc=example,dc=com` suffix):
++
+[source,text]
+----
+# extended LDIF
+#
+# LDAPv3
+# base <dc=example,dc=com> with scope subtree
+# filter: (objectclass=*)
+# requesting: ALL
+#
+
+# example.com
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: example.com
+dc: example
+entryDN: dc=example,dc=com
+subschemaSubentry: cn=schema
+creatorsName: cn=Directory Manager
+createTimestamp: YYYYMMDDHHMMSSZ
+modifiersName: cn=Directory Manager
+modifyTimestamp: YYYYMMDDHHMMSSZ
+
+# search result
+search: 2
+result: 0 Success
+
+# numResponses: 2
+# numEntries: 1
+----
++
+This output indicates that you can successfully authenticate as the Directory Manager and retrieve information from your directory, confirming its basic functionality.
+
+=== Summary
+
+Congratulations! You have successfully completed the hands-on deployment and initial configuration of a Red Hat Directory Server 13 instance. You've demonstrated proficiency in installing the necessary packages, creating and initializing an RHDS instance, applying basic configuration settings, managing the server's lifecycle, and verifying its operation using standard LDAP tools. These fundamental skills are essential building blocks for advanced RHDS administration, data management, and integration into enterprise identity management solutions.
+
+=== Troubleshooting Tips
+
+Should you encounter issues during this lab, consider the following common troubleshooting steps:
+
+*   *Firewall Configuration*: One of the most frequent causes of connectivity issues is a firewall blocking access to the LDAP ports.
+    *   Ensure that ports `389` (LDAP) and `636` (LDAPS) are open in your system's firewall.
+    +
+    [source,bash]
+    ----
+    sudo firewall-cmd --add-port=389/tcp --permanent
+    sudo firewall-cmd --add-port=636/tcp --permanent
+    sudo firewall-cmd --reload
+    ----
+
+*   *RHDS Log Files*: The server's error logs are your first point of reference for diagnosing startup failures or unexpected behavior.
+    *   Check the instance-specific error log for detailed messages:
+    +
+    [source,bash]
+    ----
+    sudo tail -f /var/log/dirsrv/slapd-myinstance/errors
+    ----
+    *   Look for keywords like `error`, `failed`, or `denied` to identify the root cause.
+
+*   *SELinux Contexts*: While RHDS typically handles SELinux contexts automatically during installation and instance creation, custom paths or unusual scenarios might lead to SELinux denials.
+    *   If you see "Permission denied" errors in logs even with correct file permissions, check `audit.log` for SELinux denials: `sudo ausearch -m AVC -ts recent`.
+    *   For this lab, using default paths, SELinux should not be an issue. If it is, temporarily setting SELinux to `permissive` (`sudo setenforce 0`) can help confirm if it's the cause, but remember to re-enable it (`sudo setenforce 1`).
+
+*   *Directory Manager Password*: A mismatch in the Directory Manager password during instance creation or when using `dsconf`/`dsctl` commands is a common mistake.
+    *   Double-check that the password in your `~/.pwd_file` exactly matches the password provided during `dscreate`.
+    *   Ensure there are no leading or trailing spaces in the password file.
+
+*   *Instance Status*: Always confirm the instance is running before attempting configuration changes or LDAP queries.
+    *   Use `sudo dsctl instance myinstance status` to quickly check the operational state.

@@ -1,0 +1,240 @@
+#  Hands-on Lab: Solve integrated troubleshooting and deployment scenarios.
+
+= Hands-on Lab: Solve Integrated Troubleshooting and Deployment Scenarios
+:navtitle: Integrated Scenarios Lab
+
+This lab challenges you to apply your comprehensive understanding of Red Hat Directory Server 13 to diagnose and resolve complex, integrated operational issues. You will be presented with a scenario involving multiple RHDS components and tasked with identifying root causes and implementing solutions, simulating real-world challenges faced by directory administrators.
+
+[discrete]
+== Learning Objectives
+
+Upon completion of this lab, you will be able to:
+
+*   Diagnose and resolve replication failures, including those stemming from security misconfigurations.
+*   Identify and rectify performance bottlenecks related to search operations by implementing attribute indexing.
+*   Implement fine-grained password policies to meet specific organizational requirements, overriding global settings.
+*   Apply a systematic troubleshooting approach in a multi-faceted Red Hat Directory Server environment.
+
+[discrete]
+== Prerequisites
+
+To effectively complete this lab, you will need:
+
+*   Two Red Hat Enterprise Linux 9 systems, each with a running Red Hat Directory Server 13 instance.
+    *   Example hostnames: `ds1.contoso.com` and `ds2.contoso.com`.
+    *   Both instances should have the same base DN (e.g., `dc=contoso,dc=com`).
+    *   *Initial Replication Setup:* Ensure that multi-supplier replication has been *attempted* to be configured between `ds1.contoso.com` and `ds2.contoso.com`. It doesn't need to be working perfectly; in fact, part of this lab is to fix it.
+    *   Basic user data loaded, including an `ou=People,dc=contoso,dc=com` and an `ou=Contractors,dc=contoso,dc=com` organizational unit.
+    *   At least one user entry under `ou=People` with a `mail` attribute (e.g., `mail=alice@contoso.com`).
+*   Administrative access (root or sudo) to both RHEL systems.
+*   The `cn=Directory Manager` password for both RHDS instances.
+
+[discrete]
+== Scenario: Contoso Corporation's RHDS Challenges
+
+You are the new Directory Services Administrator at Contoso Corporation. The previous administrator recently attempted to enhance security and performance across the RHDS environment but left before fully resolving some introduced issues. Your primary task is to investigate and resolve these critical problems to restore full functionality and meet new policy requirements.
+
+*   **Environment Details:**
+    *   RHDS Server 1: `ds1.contoso.com` (running RHDS instance `ds-1`)
+    *   RHDS Server 2: `ds2.contoso.com` (running RHDS instance `ds-2`)
+    *   Base DN: `dc=contoso,dc=com`
+    *   Admin User: `cn=Directory Manager`
+
+[discrete]
+=== Part 1: Troubleshooting Replication Failure (Security-Related)
+
+Users and applications dependent on `ds2.contoso.com` report that changes made on `ds1.contoso.com` (and vice-versa) are not propagating. Replication appears to be stalled or completely broken, despite configuration attempts. Initial investigation by junior staff suggests a security-related issue might be preventing the replication agreement from functioning correctly.
+
+.Investigation and Resolution Steps
+.. *Access RHDS Servers:* Log in to both `ds1.contoso.com` and `ds2.contoso.com` as the `root` user.
++
+[,bash]
+----
+ssh root@ds1.contoso.com
+ssh root@ds2.contoso.com
+----
+.. *Check Replication Status:* On both servers, use the `dsctl` utility to inspect the replication status for your RHDS instance (e.g., `ds-1`).
++
+[,bash, subs="+macros"]
+----
+dsctl replication status ds-1
+----
++
+You observe the replication agreement(s) displaying an `Offline` status or reporting errors, indicating a failure to synchronize.
+.. *Examine RHDS Error Logs:* The `errors` log file is your primary source for diagnostic information. Review it on both servers for the RHDS instance (e.g., `ds-1`).
++
+[,bash, subs="+macros"]
+----
+tail -f /var/log/dirsrv/slapd-ds-1/errors
+----
++
+*Troubleshooting Hint:* Look for messages related to SSL/TLS handshake failures (`SSL handshake failed`, `CERT_PREMATURE_EXPIRED`), authentication failures (`Unable to bind to replica`, `Access Denied`), or communication issues. These often point to expired certificates, incorrect certificate trust, or Access Control Instruction (ACI) misconfigurations.
+.. *Verify Certificates (if SSL errors present):* If the logs indicate SSL/TLS-related issues, verify the server certificates on both servers.
++
+[,bash, subs="+macros"]
+----
+certutil -L -d /etc/dirsrv/slapd-ds-1/
+----
++
+*Troubleshooting Step:* If certificates are expired, revoked, or not trusted by the peer server, you will need to generate new certificates, import them, and configure RHDS to use them. Ensure the CA certificate that signed the server certificates is trusted by both servers.
+.. *Review Replication Agreement Bind DN and ACIs (if authentication/access errors present):* If the logs suggest "Access Denied" or "Unable to bind", ensure the bind DN used in the replication agreement has the necessary permissions to read and write to the replicated subtree.
++
+You can inspect the replication agreements using `dsconf`. For example, to list all agreements:
++
+[,bash, subs="+macros"]
+----
+dsconf -D "cn=Directory Manager" -w 'your_password' replication list ds-1
+----
++
+Then, examine the specific agreement for its `replica-bind-dn` and ensure corresponding ACIs grant `write` permissions to this DN on the replication suffix. If necessary, create or modify ACIs to allow the replication manager's bind DN appropriate access.
++
+*Example ACI (if needed, adjust DNs):*
++
+[,bash]
+----
+ldapmodify -H ldap://localhost -D "cn=Directory Manager" -w 'your_password' << EOF
+dn: cn=replication agreement,cn=replica,cn="dc=contoso,dc=com",cn=mapping tree,cn=config
+changetype: modify
+add: aci
+aci: (targetattr="*")(version 3.0; acl "Replication Manager write access"; allow (write) userdn="ldap:///cn=replication manager,cn=config";)
+EOF
+----
+.. *Restart RHDS:* After making any certificate, ACI, or configuration changes, restart the RHDS instances on both servers.
++
+[,bash, subs="+macros"]
+----
+dsctl restart ds-1
+----
+.. *Verify Replication:* After the restart, check `dsctl replication status ds-1` again. Then, create a test entry on one server and search for it on the other to confirm successful replication.
++
+[,bash, subs="+macros"]
+----
+ldapadd -H ldap://localhost -D "cn=Directory Manager" -w 'your_password' << EOF
+dn: cn=ReplicationTestUser,ou=People,dc=contoso,dc=com
+objectClass: top
+objectClass: person
+cn: ReplicationTestUser
+sn: Test
+description: User to test replication
+EOF
+----
++
+Now, on the *other* server:
++
+[,bash, subs="+macros"]
+----
+ldapsearch -H ldap://localhost -x -b "ou=People,dc=contoso,dc=com" "(cn=ReplicationTestUser)"
+----
++
+*Expected Outcome:* The `ReplicationTestUser` entry should appear on both servers, and the replication status for all agreements should show `Online`.
+
+[discrete]
+=== Part 2: Optimizing Search Performance (Indexing)
+
+The help desk is receiving numerous complaints about slow search times when users attempt to look up other employees by their email address, particularly within the `ou=People,dc=contoso,dc=com` subtree. This suggests a potential performance bottleneck.
+
+.Investigation and Resolution Steps
+.. *Simulate Slow Search:* On `ds1.contoso.com`, perform a timed search for an email address that you know exists within the `ou=People` subtree.
++
+[,bash, subs="+macros"]
+----
+time ldapsearch -H ldap://localhost -x -b "ou=People,dc=contoso,dc=com" "(mail=alice@contoso.com)" dn
+----
++
+Make note of the `real` time taken for this search. This will be your baseline.
+.. *Check Existing Indexes:* Use `dsconf` to list the currently configured indexes for the `userRoot` database.
++
+[,bash, subs="+macros"]
+----
+dsconf -D "cn=Directory Manager" -w 'your_password' backend userRoot list-indexes
+----
++
+Observe whether an equality (`eq`) or substring (`sub`) index exists for the `mail` attribute. If it's missing or only a less efficient index type is present, this is a strong indicator of the performance issue.
+.. *Add a New Index:* To optimize searches for `mail` attributes, add an equality index. A substring index might also be beneficial if wildcard searches are common.
++
+[,bash, subs="+macros"]
+----
+dsconf -D "cn=Directory Manager" -w 'your_password' backend userRoot add-index --attr mail --type eq
+----
+.. *Rebuild the Index:* For the newly added index to take effect, the database must be rebuilt. This operation can be resource-intensive and might cause a temporary performance impact on very large directories.
++
+[,bash, subs="+macros"]
+----
+dsconf -D "cn=Directory Manager" -w 'your_password' backend userRoot rebuild-indexes
+----
+.. *Verify Performance Improvement:* Repeat the timed search you performed in Step 1 and compare the `real` time with your baseline.
++
+[,bash, subs="+macros"]
+----
+time ldapsearch -H ldap://localhost -x -b "ou=People,dc=contoso,dc=com" "(mail=alice@contoso.com)" dn
+----
++
+*Expected Outcome:* The search time should be significantly reduced, demonstrating improved performance.
+
+[discrete]
+=== Part 3: Implementing Fine-Grained Password Policy
+
+The Contoso legal department has a new compliance requirement: all users in the `ou=Contractors,dc=contoso,dc=com` subtree must have a password aging policy of 90 days. This policy must override the existing global password policy, which is set to 180 days.
+
+.Investigation and Resolution Steps
+.. *Check Global Password Policy (Optional):* You can optionally review the current global password policy to confirm its settings.
++
+[,bash, subs="+macros"]
+----
+ldapsearch -H ldap://localhost -x -b "cn=Password Policy,cn=config" objectClass=*
+----
+.. *Create a Fine-Grained Password Policy Entry:* Create a new, specific password policy entry under `cn=Password Policies,cn=config`. This policy will enforce a 90-day password aging period.
++
+[,bash, subs="+macros"]
+----
+ldapadd -H ldap://localhost -D "cn=Directory Manager" -w 'your_password' << EOF
+dn: cn=Contractor Policy,cn=Password Policies,cn=config
+objectClass: top
+objectClass: nsContainer
+objectClass: nsPasswordPolicy
+cn: Contractor Policy
+pwdGraceAuthNLimit: 0
+pwdMaxAge: 7776000 ; 90 days (60 * 60 * 24 * 90 seconds)
+pwdMinAge: 0
+pwdInHistory: 5
+pwdLockout: on
+pwdMaxFailure: 5
+pwdFailureCountInterval: 3600
+pwdLockoutDuration: 300
+pwdMinLength: 8
+pwdCheckSyntax: 1
+pwdAttribute: userPassword
+EOF
+----
++
+*Note:* `pwdMaxAge` is specified in seconds. 90 days * 24 hours/day * 60 minutes/hour * 60 seconds/minute = 7,776,000 seconds.
+.. *Apply the Policy to the Target Subtree:* Modify the `ou=Contractors,dc=contoso,dc=com` organizational unit entry to link it to the newly created `Contractor Policy`. This is done by adding the `passwordPolicySubentry` attribute.
++
+[,bash, subs="+macros"]
+----
+ldapmodify -H ldap://localhost -D "cn=Directory Manager" -w 'your_password' << EOF
+dn: ou=Contractors,dc=contoso,dc=com
+changetype: modify
+add: passwordPolicySubentry
+passwordPolicySubentry: cn=Contractor Policy,cn=Password Policies,cn=config
+EOF
+----
+.. *Verify Policy Application:* Confirm that the `passwordPolicySubentry` attribute has been correctly applied to the `ou=Contractors` entry.
++
+[,bash, subs="+macros"]
+----
+ldapsearch -H ldap://localhost -x -b "ou=Contractors,dc=contoso,dc=com" "(objectClass=*)" passwordPolicySubentry
+----
++
+To fully test, you would typically:
+*   Create a test user under `ou=Contractors,dc=contoso,dc=com`.
+*   Set a password for this user.
+*   Attempt to change the password to one that violates the new policy (e.g., too short, or try to change it too frequently if `pwdMinAge` was configured for a period).
+*   Observe the `passwordExpirationTime` operational attribute on the user after setting a password, which should reflect the 90-day period.
++
+*Expected Outcome:* The `ldapsearch` command should show `passwordPolicySubentry: cn=Contractor Policy,cn=Password Policies,cn=config`. Users within the `ou=Contractors` subtree will now be subject to the 90-day password aging policy, overriding the global setting.
+
+[discrete]
+== Conclusion
+
+This lab provided you with a realistic, integrated scenario that combined common troubleshooting and configuration challenges in a Red Hat Directory Server 13 environment. By systematically diagnosing replication failures, optimizing search performance through indexing, and implementing fine-grained password policies, you have demonstrated a comprehensive understanding of RHDS administration and effective problem-solving skills crucial for maintaining robust directory services.

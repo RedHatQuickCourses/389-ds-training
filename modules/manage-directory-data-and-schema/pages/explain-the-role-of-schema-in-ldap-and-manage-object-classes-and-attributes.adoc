@@ -1,0 +1,300 @@
+#  Explain the role of schema in LDAP and manage object classes and attributes.
+
+This module covers the critical role of schema in LDAP directories, particularly within Red Hat Directory Server 13. Understanding and managing schema is fundamental to ensuring data consistency, integrity, and proper structure within your directory service.
+
+[role="doc-toc"]
+= Explain the role of schema in LDAP and manage object classes and attributes
+
+:leveloffset: 2
+
+[[_introduction_to_ldap_schema]]
+== Introduction to LDAP Schema
+
+The Lightweight Directory Access Protocol (LDAP) is designed to store and retrieve structured data in a hierarchical manner. However, for this data to be meaningful and consistently managed, there needs to be a set of rules defining what kind of data can be stored, where it can be stored, and how it should be structured. This set of rules is known as the *LDAP Schema*.
+
+Simply put, the LDAP schema acts as the blueprint or a strict data model for the directory. It dictates:
+
+*   **What types of entries can exist:** For example, a `person` entry, an `organization` entry, or a `groupOfNames` entry.
+*   **What attributes each entry type must or can contain:** For instance, a `person` entry *must* have a `cn` (common name) and `sn` (surname), and *can* have a `mail` attribute.
+*   **The data type and format of each attribute:** Whether an attribute holds a string, an integer, a date, a distinguished name (DN), or a binary value.
+*   **How attributes can be compared and searched:** Known as matching rules.
+
+Without a schema, an LDAP directory would be a chaotic collection of unstructured data, impossible to manage or query effectively. The schema enforces consistency, ensures data integrity, and facilitates interoperability between different LDAP clients and servers.
+
+[[_core_components_of_ldap_schema]]
+== Core Components of LDAP Schema
+
+The LDAP schema is comprised of several key components: object classes, attributes, and matching rules, all uniquely identified by Object Identifiers (OIDs).
+
+[[_object_classes]]
+=== Object Classes
+
+Object classes are the fundamental building blocks of an LDAP entry. Every entry in the directory must belong to one or more object classes. An object class defines a collection of attributes that an entry *must* (mandatory) or *can* (optional) possess.
+
+There are three main types of object classes:
+
+*   **Structural Object Classes:** These define the primary purpose and structure of an entry. An entry must belong to exactly one structural object class. Examples include `person`, `organizationalPerson`, `inetOrgPerson`, `organization`, and `groupOfNames`.
+*   **Auxiliary Object Classes:** These allow you to add additional sets of attributes to an entry that are not part of its primary structural definition. An entry can belong to zero or more auxiliary object classes. For example, you might add the `extensibleObject` auxiliary class to an entry to allow it to hold *any* attribute not explicitly defined by its structural or other auxiliary classes (though this is often discouraged for strict schema adherence). Another common example is adding `posixAccount` to an `inetOrgPerson` to give it UNIX-specific attributes like `uidNumber` and `gidNumber`.
+*   **Abstract Object Classes:** These cannot be instantiated directly as entries. Instead, they serve as templates or parent classes from which other object classes inherit attributes. Examples include `top` (the superclass for all other object classes) and `alias`.
+
+Each object class definition specifies:
+
+*   Its unique *name* and *OID*.
+*   Its *type* (structural, auxiliary, abstract).
+*   Its *parent* object classes from which it inherits definitions.
+*   A list of *mandatory attributes* (`MUST` attributes) that any entry belonging to this object class must contain.
+*   A list of *optional attributes* (`MAY` attributes) that an entry belonging to this object class can contain.
+
+[[_attributes]]
+=== Attributes
+
+Attributes are the individual pieces of information stored within an LDAP entry. Each attribute has a name (e.g., `cn`, `sn`, `mail`), a value (e.g., "John Doe", "Doe", "john.doe@example.com"), and a set of rules defining its characteristics.
+
+Key characteristics of attributes include:
+
+*   **Syntax:** Defines the data type of the attribute's value. Common syntaxes include:
+    *   `Directory String` (text)
+    *   `IA5 String` (ASCII text)
+    *   `Integer`
+    *   `Boolean`
+    *   `DN` (Distinguished Name)
+    *   `Octet String` (binary data, e.g., for photos)
+    *   `Generalized Time` (date and time)
+*   **Matching Rules:** Define how comparisons and searches are performed on an attribute's value (e.g., case-sensitive, case-insensitive, numeric comparison).
+*   **Usage:** Determines how the attribute can be used. Most commonly, attributes are `userApplications`, meaning they hold user data. Others include `directoryOperation` (for operational attributes managed by the server), `distributedOperation`, and `dSAOperation`.
+*   **Single-value vs. Multi-value:** An attribute can be configured to hold only a single value (e.g., `sn` - surname) or multiple values (e.g., `mail` - an individual might have multiple email addresses).
+
+[[_object_identifiers_oids]]
+=== Object Identifiers (OIDs)
+
+Every object class, attribute, and matching rule in an LDAP schema is uniquely identified by an Object Identifier (OID). OIDs are hierarchical numeric strings (e.g., `1.3.6.1.4.1.1466.115.121.1.8`). They ensure global uniqueness for schema elements, preventing naming conflicts when combining schemas from different sources.
+
+[[_ldap_schema_and_red_hat_directory_server_13]]
+== LDAP Schema and Red Hat Directory Server 13
+
+Red Hat Directory Server (RHDS) 13, like all LDAP servers, relies heavily on schema for its operation. It comes pre-configured with a comprehensive set of standard LDAP schema definitions (e.g., `RFC2252`, `RFC2256`, `RFC2798` for `inetOrgPerson`), as well as RHDS-specific schema extensions.
+
+RHDS stores its schema definitions in special entries within the directory itself, typically under the `cn=schema,cn=config` suffix. These entries are represented using `subschema` or `subschema subentry` object classes.
+
+While RHDS ships with a rich set of predefined schema, real-world scenarios often require extending the schema to accommodate application-specific data. This might involve:
+
+*   Adding new attributes to existing object classes.
+*   Creating entirely new object classes (often auxiliary) to group application-specific attributes.
+*   Defining new structural object classes for entirely new types of directory entries.
+
+It's crucial to exercise caution when extending the schema, as incorrect or poorly designed schema can lead to data integrity issues or compatibility problems. Best practices include:
+
+*   **Reuse existing schema:** Before creating new attributes or object classes, check if suitable ones already exist in the standard schema.
+*   **Use a unique OID branch:** When defining custom schema, ensure you use OIDs from a private enterprise number (PEN) assigned to your organization or a temporary branch to avoid conflicts.
+*   **Start with auxiliary classes:** If possible, add new attributes by creating new auxiliary object classes rather than modifying existing structural ones.
+*   **Test thoroughly:** Always test schema changes in a development environment before deploying to production.
+
+[[_hands_on_lab_managing_directory_schema]]
+== Hands-on Lab: Managing Directory Schema
+
+In this lab, you will learn how to inspect the existing RHDS schema and then extend it by defining a new custom attribute and an auxiliary object class.
+
+Before you begin, ensure you have a running Red Hat Directory Server 13 instance. You will need administrative access to perform these operations.
+
+[[_prerequisites]]
+=== Prerequisites
+
+*   A running RHDS 13 instance, configured and accessible.
+*   `ldapsearch`, `ldapmodify`, and a text editor available on your client machine (or directly on the RHDS server if performing operations locally).
+*   Administrative credentials for the directory (e.g., `cn=Directory Manager`).
+
+[[_activity_1_viewing_existing_schema]]
+=== Activity 1: Viewing Existing Schema
+
+You can inspect the RHDS schema by searching the `cn=schema,cn=config` entry.
+
+.View the entire schema entry:
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -w "password" -b "cn=schema,cn=config" objectclass=\*
+----
+This command will output a very large LDIF entry containing all defined object classes, attribute types, and other schema elements.
+
+.Filter for a specific object class (e.g., `inetOrgPerson`):
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -w "password" -b "cn=schema,cn=config" "(objectClass=subschema)" \
+    | grep -A 5 "objectclass: \(1.3.6.1.4.1.1466.344.0\) NAME 'inetOrgPerson'"
+----
+This command filters the schema output to show the definition of the `inetOrgPerson` object class. You'll see its OID, name, parent classes, and the `MUST` and `MAY` attributes it defines.
+
+.Filter for a specific attribute type (e.g., `mail`):
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -w "password" -b "cn=schema,cn=config" "(objectClass=subschema)" \
+    | grep -A 5 "attributetype: \(0.9.2342.19200300.100.1.3\) NAME 'mail'"
+----
+This command shows the definition of the `mail` attribute type, including its OID, name, syntax, and whether it's single or multi-valued.
+
+[[_activity_2_defining_a_new_custom_attribute]]
+=== Activity 2: Defining a New Custom Attribute
+
+Let's create a new attribute type called `rhdsTrainingId` to store a unique training ID for users.
+
+.Create an LDIF file named `add_training_id_attribute.ldif` with the following content:
+[source,ldif]
+----
+dn: cn=schema,cn=config
+changetype: modify
+add: attributetypes
+attributetypes: ( 1.3.6.1.4.1.99999.1.1 NAME 'rhdsTrainingId' SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+----
+*   `1.3.6.1.4.1.99999.1.1`: This is a custom OID. *In a real production environment, you would use an OID branch assigned to your organization.* For lab purposes, `99999` is used as a placeholder.
+*   `NAME 'rhdsTrainingId'`: The human-readable name of our new attribute.
+*   `SYNTAX 1.3.6.1.4.1.1466.115.121.1.15`: This OID specifies the `Directory String` syntax, suitable for general text.
+*   `SINGLE-VALUE`: This attribute can only have one value per entry.
+
+.Apply the schema change using `ldapmodify`:
+[source,bash]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -w "password" -f add_training_id_attribute.ldif
+----
+You should see output similar to:
+`modifying entry "cn=schema,cn=config"`
+
+.Verify the new attribute:
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -w "password" -b "cn=schema,cn=config" "(objectClass=subschema)" \
+    | grep -A 2 "attributetype: \(1.3.6.1.4.1.99999.1.1\) NAME 'rhdsTrainingId'"
+----
+This should display the definition of your newly added `rhdsTrainingId` attribute.
+
+[[_activity_3_defining_a_new_auxiliary_object_class]]
+=== Activity 3: Defining a New Auxiliary Object Class
+
+Now, let's create an auxiliary object class called `rhdsStudent` that *may* use our new `rhdsTrainingId` attribute.
+
+.Create an LDIF file named `add_rhds_student_oc.ldif` with the following content:
+[source,ldif]
+----
+dn: cn=schema,cn=config
+changetype: modify
+add: objectclasses
+objectclasses: ( 1.3.6.1.4.1.99999.1.2 NAME 'rhdsStudent' SUP top AUXILIARY MAY ( rhdsTrainingId ) )
+----
+*   `1.3.6.1.4.1.99999.1.2`: Another custom OID for our object class.
+*   `NAME 'rhdsStudent'`: The name of our new object class.
+*   `SUP top`: This class inherits from the `top` abstract object class (all object classes do).
+*   `AUXILIARY`: Specifies that this is an auxiliary object class.
+*   `MAY ( rhdsTrainingId )`: Indicates that entries belonging to this object class *can* have the `rhdsTrainingId` attribute. We don't make it `MUST` as it's an optional training ID.
+
+.Apply the schema change using `ldapmodify`:
+[source,bash]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -w "password" -f add_rhds_student_oc.ldif
+----
+You should see output similar to:
+`modifying entry "cn=schema,cn=config"`
+
+.Verify the new object class:
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -w "password" -b "cn=schema,cn=config" "(objectClass=subschema)" \
+    | grep -A 5 "objectclass: \(1.3.6.1.4.1.99999.1.2\) NAME 'rhdsStudent'"
+----
+This should display the definition of your newly added `rhdsStudent` object class.
+
+[[_activity_4_using_the_new_object_class_and_attribute]]
+=== Activity 4: Using the New Object Class and Attribute
+
+Now that our custom schema is in place, we can apply it to an existing entry. Let's assume you have a user entry like `uid=jdoe,ou=Users,dc=example,dc=com`. If not, create a simple one:
+
+.Create a user entry (if you don't have one):
+[source,ldif]
+----
+dn: uid=jdoe,ou=Users,dc=example,dc=com
+changetype: add
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: John Doe
+sn: Doe
+uid: jdoe
+mail: jdoe@example.com
+userPassword: password
+----
+Save this as `add_jdoe.ldif` and add it:
+[source,bash]
+----
+ldapadd -h localhost -p 389 -D "cn=Directory Manager" -w "password" -f add_jdoe.ldif
+----
+
+.Modify the user entry to include the `rhdsStudent` auxiliary object class and the `rhdsTrainingId` attribute.
+.Create an LDIF file named `modify_jdoe_student.ldif`:
+[source,ldif]
+----
+dn: uid=jdoe,ou=Users,dc=example,dc=com
+changetype: modify
+add: objectClass
+objectClass: rhdsStudent
+-
+add: rhdsTrainingId
+rhdsTrainingId: RHDS13-001
+----
+
+.Apply the modification:
+[source,bash]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -w "password" -f modify_jdoe_student.ldif
+----
+
+.Verify the entry now contains the new object class and attribute:
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -w "password" -b "uid=jdoe,ou=Users,dc=example,dc=com" objectClass rhdsTrainingId
+----
+You should see output similar to:
+```
+# jdoe, Users, example.com
+dn: uid=jdoe,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: rhdsStudent
+rhdsTrainingId: RHDS13-001
+```
+This confirms that you have successfully extended the directory schema and applied the new schema elements to a directory entry.
+
+.Cleanup (Optional):
+To remove the added schema elements and the test user, create the following LDIF files:
+
+`delete_schema.ldif`:
+[source,ldif]
+----
+dn: cn=schema,cn=config
+changetype: modify
+delete: objectclasses
+objectclasses: ( 1.3.6.1.4.1.99999.1.2 NAME 'rhdsStudent' SUP top AUXILIARY MAY ( rhdsTrainingId ) )
+-
+delete: attributetypes
+attributetypes: ( 1.3.6.1.4.1.99999.1.1 NAME 'rhdsTrainingId' SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+----
+Apply:
+[source,bash]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -w "password" -f delete_schema.ldif
+----
+
+`delete_jdoe.ldif`:
+[source,ldif]
+----
+dn: uid=jdoe,ou=Users,dc=example,dc=com
+changetype: delete
+----
+Apply:
+[source,bash]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -w "password" -f delete_jdoe.ldif
+----
+
+This lab demonstrated the process of understanding, viewing, and extending the LDAP schema within Red Hat Directory Server 13, a crucial skill for adapting your directory service to specific organizational needs.
+
+:leveloffset: -2

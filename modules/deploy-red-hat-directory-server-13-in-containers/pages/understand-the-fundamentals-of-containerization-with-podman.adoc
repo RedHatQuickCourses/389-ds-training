@@ -1,0 +1,270 @@
+#  Understand the fundamentals of containerization with Podman.
+
+[[containerization-fundamentals]]
+= Understanding Containerization with Podman
+
+This section introduces the foundational concepts of containerization and explores Podman, Red Hat's daemonless container engine. Understanding these fundamentals is crucial for deploying and managing Red Hat Directory Server 13 in a modern, containerized environment, offering benefits such as portability, scalability, and resource isolation.
+
+[[what-is-containerization]]
+== What is Containerization?
+
+Containerization is a lightweight, portable, and efficient method of packaging an application and all its dependencies (libraries, configuration files, runtime, etc.) into a single, isolated unit called a *container*. This container can then run consistently across various computing environments, from a developer's laptop to an on-premise server or a cloud platform.
+
+Historically, applications were deployed directly on physical servers or virtual machines (VMs). While VMs offer isolation and resource allocation, they involve running a full operating system for each application, leading to significant overhead. Containers provide a more granular form of isolation at the application level, sharing the host operating system's kernel while providing isolated user-space environments.
+
+[cols="1,1,1",options="header"]
+|===
+| Physical Server | Virtual Machine (VM) | Container
+| All applications share the host OS and resources. Minimal isolation, high risk of conflicts. | Each application runs in its own VM with a dedicated guest OS. Strong isolation, but high resource utilization. | Applications share the host OS kernel but run in isolated user-space environments. Low resource utilization, strong isolation.
+| Difficult to manage dependencies and scale consistently. | Slower to boot, less portable due to full OS image. | Fast to boot, highly portable, consistent environment regardless of host OS.
+|===
+
+The core idea behind containerization is to abstract away the underlying infrastructure, providing a consistent and isolated environment for applications. This ensures that an application behaves the same way regardless of where it is run, eliminating common "it works on my machine but not in production" issues.
+
+[[benefits-of-containerization]]
+=== Benefits of Containerization
+
+Deploying applications like Red Hat Directory Server in containers offers several compelling advantages:
+
+*   *Portability:* Containers package everything an application needs to run, making them highly portable. You can move a container from a development machine to a test environment and then to production, knowing it will function identically.
+*   *Consistency:* The containerized environment is isolated from the host system and other containers. This guarantees that the application runs consistently, regardless of differences in the underlying operating system or other installed software.
+*   *Isolation:* Each container runs in isolation, with its own filesystem, network stack, and process space. This prevents conflicts between applications and enhances security by limiting the impact of a compromised application to its own environment.
+*   *Efficiency:* Containers share the host OS kernel, making them much lighter and faster to start than virtual machines. This reduces resource consumption (CPU, RAM) and allows for higher density deployments on a single host.
+*   *Scalability:* Containers can be easily replicated and scaled horizontally to handle increased load. Orchestration tools like Kubernetes (which works seamlessly with Podman) can automate this scaling and management.
+*   *Faster Development Cycles:* Developers can build and test applications in containers that closely mirror production environments, accelerating the development and deployment process by reducing environment-related discrepancies.
+
+[[introducing-podman]]
+== Introducing Podman
+
+Podman (Pod Manager) is a daemonless, open-source container engine developed by Red Hat. It allows you to develop, manage, and run OCI (Open Container Initiative) compliant containers and container images on your Linux system. Podman is a direct replacement for Docker in many scenarios, particularly favored in Red Hat Enterprise Linux environments due to its rootless capabilities and deep integration with systemd.
+
+[[podman-vs-docker]]
+=== Podman vs. Docker
+
+Historically, Docker was the dominant container engine. Podman emerged as a robust alternative, especially for enterprise Linux users. Here's a brief comparison highlighting key differences:
+
+[cols="1,1",options="header"]
+|===
+| Feature | Docker | Podman
+| *Architecture* | Client-server architecture with a persistent daemon (`dockerd`) that manages containers. All commands go through this daemon. | Daemonless architecture. Commands directly interact with the OCI runtime (e.g., runc) and container storage, similar to how traditional Linux processes are managed.
+| *Rootless Containers* | Primarily designed to run as root; rootless mode requires more configuration and has some limitations. | Designed from the ground up for rootless operation, allowing non-privileged users to run containers, significantly enhancing security.
+| *Systemd Integration* | Less direct integration; often relies on custom scripts or Docker-specific service files for systemd. | Excellent integration with systemd for managing containers as system services, making it feel more like a native Linux application.
+| *Security* | The single daemon can be a potential point of failure; requires root privileges for the daemon. | Daemonless nature reduces the attack surface. Rootless mode improves security by running containers as unprivileged users.
+| *CLI Commands* | `docker run`, `docker build`, `docker images`, etc. | The command-line interface is largely compatible (`podman run`, `podman build`, etc.), making migration from Docker straightforward.
+| *Orchestration* | Native Docker Compose for multi-container applications; integrates well with Kubernetes. | No native Podman Compose, but can generate Kubernetes YAML. Integrates well with Kubernetes and OpenShift.
+|===
+
+The daemonless architecture of Podman means there's no long-running background process managing containers. Each `podman` command directly interacts with the necessary components, making it more secure (no single point of failure or root daemon to exploit) and easier to integrate with traditional Linux tools like `systemd` and `cgroups`.
+
+[[key-container-concepts-with-podman]]
+== Key Container Concepts with Podman
+
+To effectively use Podman for deploying and managing applications, it's essential to understand a few core concepts:
+
+=== Container Images
+
+A *container image* is a static, immutable, and executable package that includes everything needed to run an application: the application code, a runtime (e.g., Java Virtual Machine, Python interpreter), system tools, system libraries, and configuration settings. Images are built from a `Containerfile` (often historically called a `Dockerfile`), which is a plain-text file containing a set of instructions for creating the image layer by layer.
+
+Images are stored in *registries* (like Red Hat Quay.io, Docker Hub, or a private enterprise registry) and can be pulled down to a host to create running instances called containers.
+
+[source,bash]
+----
+# Pull an image from a registry. This example pulls the Red Hat Universal Base Image (UBI) 8.
+podman pull registry.access.redhat.com/ubi8/ubi
+
+# List locally stored images on your system
+podman images
+----
+
+=== Containers
+
+A *container* is a runnable instance of a container image. When you execute an image using `podman run`, Podman creates a container, which is an isolated process or set of processes on your host system. Containers are ephemeral by default, meaning any changes made inside them are lost once the container is removed, unless persistent storage is explicitly configured.
+
+You can start, stop, pause, and delete containers using Podman commands.
+
+[source,bash]
+----
+# Run a simple container interactively, giving it a name and executing a shell
+podman run --name my-rhds-example -it registry.access.redhat.com/rhds/rhds-13-rhel8:latest /bin/bash
+
+# List currently running containers
+podman ps
+
+# List all containers (including stopped ones)
+podman ps -a
+
+# Stop a running container by its name or ID
+podman stop my-rhds-example
+
+# Remove a stopped container
+podman rm my-rhds-example
+----
+
+=== Registries
+
+A *container registry* is a centralized, secure repository for storing, managing, and distributing container images. Registries can be public or private.
+*   *Public Registries:* Examples include `registry.access.redhat.com` (for official Red Hat images like UBI and RHDS) and Docker Hub.
+*   *Private Registries:* Enterprises often use private registries (e.g., Red Hat Quay, GitLab Container Registry) to store their custom-built or sensitive application images securely within their network.
+
+When you use `podman pull` or `podman push`, you are interacting with a container registry.
+
+=== Volumes (Persistent Storage)
+
+By default, data written inside a container's filesystem is ephemeral; it's lost when the container is deleted. For stateful applications like Red Hat Directory Server, which manage critical user and configuration data, *persistent storage* is essential. Podman allows you to mount host directories or specialized volumes into containers to ensure data survives container restarts or deletions.
+
+*   *Bind Mounts:* Map a specific directory from the host filesystem directly into a container. This is highly flexible and useful for accessing host-specific configurations, application data, or logs.
+*   *Named Volumes:* Podman manages these volumes, which are stored in a dedicated location on the host (e.g., `/var/lib/containers/storage/volumes`). Named volumes are generally preferred for database storage as they are more portable, easier to back up, and often have better performance characteristics.
+
+[source,bash]
+----
+# Create a named volume specifically for RHDS database files
+podman volume create rhds-db-volume
+
+# Run an RHDS container, mounting the named volume for persistent database storage
+# The :Z option ensures correct SELinux labeling for the mounted volume, allowing the container to access it.
+podman run -d --name my-rhds-server \
+  -p 389:389 -p 636:636 \
+  -v rhds-db-volume:/var/lib/dirsrv/slapd-instance/db:Z \
+  registry.access.redhat.com/rhds/rhds-13-rhel8:latest
+
+# You can also bind mount host directories, e.g., for custom configuration files
+# podman run -d --name my-rhds-config \
+#   -v /opt/rhds/config:/etc/dirsrv/slapd-instance/config:Z \
+#   registry.access.redhat.com/rhds/rhds-13-rhel8:latest
+----
+
+=== Networking
+
+Containers need to communicate with each other, with the host system, and often with external networks. Podman provides several networking options:
+
+*   *Bridge Network (default):* By default, Podman creates a bridge network (often `podman0`). Containers connected to this bridge can communicate with each other. The host acts as a router, forwarding traffic between the container network and its physical interfaces.
+*   *Host Network:* The container shares the host's network namespace, effectively using the host's network interfaces directly. This provides no network isolation for the container but offers the best network performance and direct access to host services.
+*   *None Network:* The container has no network connectivity. This is useful for containers that perform tasks without needing network access.
+*   *Custom Networks:* You can create user-defined bridge networks for better isolation and organization of your containerized applications, allowing specific groups of containers to communicate while remaining isolated from others.
+
+[source,bash]
+----
+# List existing Podman networks
+podman network ls
+
+# Create a custom network for your RHDS deployment
+podman network create rhds-internal-net
+
+# Run an RHDS container connected to the custom network
+# The -p flags map container ports to host ports
+podman run -d --name rhds-server --network rhds-internal-net \
+  -p 389:389 -p 636:636 \
+  registry.access.redhat.com/rhds/rhds-13-rhel8:latest
+----
+
+[[hands-on-introduction-to-podman]]
+== Hands-on Activity: Getting Started with Podman
+
+This introductory lab will walk you through installing Podman, pulling your first image, and running a simple container. It lays the groundwork for later labs involving Red Hat Directory Server 13.
+
+=== Prerequisites
+
+*   A Red Hat Enterprise Linux 8 or 9 system (physical or virtual machine) with `sudo` access.
+*   Internet connectivity to pull container images from Red Hat registries.
+
+=== Lab Steps
+
+.  *Install Podman*
+    On RHEL 8/9, Podman is typically available in the default AppStream repositories. Use `dnf` to install it.
+
+    [source,bash,subs="attributes+"]
+    ----
+    sudo dnf install podman -y
+    ----
+    This command installs Podman and its necessary dependencies.
+
+.  *Verify Podman Installation*
+    Check the installed version to ensure Podman is working correctly.
+
+    [source,bash,subs="attributes+"]
+    ----
+    podman --version
+    ----
+    You should see output similar to `podman version 4.x.x` (the exact version may vary).
+
+.  *Pull Your First Image*
+    We'll pull the Red Hat Universal Base Image (UBI) 8, a lightweight, freely redistributable, and supported base image provided by Red Hat.
+
+    [source,bash,subs="attributes+"]
+    ----
+    podman pull registry.access.redhat.com/ubi8/ubi
+    ----
+    This command downloads the latest `ubi8/ubi` image from the official Red Hat container registry. It might take a moment depending on your internet connection.
+
+.  *List Local Images*
+    Verify that the image has been successfully downloaded to your local storage.
+
+    [source,bash,subs="attributes+"]
+    ----
+    podman images
+    ----
+    You should see `registry.access.redhat.com/ubi8/ubi` listed in the output, along with its tag, image ID, and size.
+
+.  *Run Your First Container (Non-Interactive)*
+    Now, let's run a simple container based on the UBI 8 image. We'll execute a command inside it, and the container will automatically exit after the command completes.
+
+    [source,bash,subs="attributes+"]
+    ----
+    podman run --name my-first-container registry.access.redhat.com/ubi8/ubi echo "Hello from inside the container!"
+    ----
+    *   `--name my-first-container`: Assigns a human-readable name to your container, making it easier to reference.
+    *   `registry.access.redhat.com/ubi8/ubi`: Specifies the container image to use.
+    *   `echo "Hello from inside the container!"`: This is the command that will be executed inside the container.
+
+    You should see the output `Hello from inside the container!` printed to your terminal. The container started, executed the command, and then terminated.
+
+.  *Inspect Running and Exited Containers*
+    Check the status of your containers.
+
+    [source,bash,subs="attributes+"]
+    ----
+    # List only currently running containers (this output should be empty after the previous step)
+    podman ps
+
+    # List all containers, including those that have exited
+    podman ps -a
+    ----
+    You should see `my-first-container` in the `podman ps -a` output, with a status indicating it exited (e.g., `Exited (0) ...`).
+
+.  *Run an Interactive Container*
+    Let's run a container and get an interactive shell inside it, allowing you to explore the container's environment.
+
+    [source,bash,subs="attributes+"]
+    ----
+    podman run -it --name interactive-ubi registry.access.redhat.com/ubi8/ubi /bin/bash
+    ----
+    *   `-i`: Keeps `STDIN` open, allowing interactive input.
+    *   `-t`: Allocates a pseudo-TTY (terminal), providing a proper shell experience.
+    *   `/bin/bash`: The command to run as the container's entry point, in this case, a bash shell.
+
+    Your terminal prompt should change (e.g., to `[root@<container-id> /]#`), indicating you are now inside the container.
+
+    [source,bash,subs="attributes+"]
+    ----
+    # (Inside the container) Check the OS release information
+    cat /etc/os-release
+
+    # (Inside the container) Exit the container's shell
+    exit
+    ----
+    After typing `exit`, you will return to your host system's terminal.
+
+.  *Clean Up Containers*
+    Remove the containers you created to free up resources. While exited containers don't consume much CPU/RAM, they still use disk space and clutter the `podman ps -a` output.
+
+    [source,bash,subs="attributes+"]
+    ----
+    podman rm my-first-container interactive-ubi
+    ----
+    You can also remove images if you no longer need them (this is optional for now, as you might use `ubi8/ubi` again).
+    [source,bash,subs="attributes+"]
+    ----
+    # podman rmi registry.access.redhat.com/ubi8/ubi
+    ----
+
+This hands-on activity provides a basic understanding of how to install Podman, interact with container images, and manage containers. This foundational knowledge is critical for the upcoming sections where you will learn to deploy and manage Red Hat Directory Server 13 within containerized environments.

@@ -1,0 +1,8 @@
+* xref:configure-advanced-server-settings-and-performance.adoc[]
+** xref:configure-server-wide-parameters-and-instance-specific-settings.adoc[]
+** xref:manage-multiple-suffixes-and-database-instances.adoc[]
+** xref:implement-attribute-indexing-to-optimize-search-performance.adoc[]
+** xref:enable-and-configure-rhds-plugins-for-extended-functionality.adoc[]
+** xref:monitor-rhds-server-performance-and-resource-utilization.adoc[]
+** xref:configure-logging-and-auditing-for-compliance-and-troubleshooting.adoc[]
+** xref:hands-on-lab-optimize-server-performance-through-indexing-and-plugin-configuration.adoc[]

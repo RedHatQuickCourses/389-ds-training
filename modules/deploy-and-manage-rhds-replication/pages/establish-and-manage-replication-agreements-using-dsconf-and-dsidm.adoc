@@ -1,0 +1,555 @@
+#  Establish and manage replication agreements using `dsconf` and `dsidm`.
+
+= Establish and Manage Replication Agreements
+
+Replication is a fundamental aspect of high-availability and scalable directory services. To ensure data consistency across multiple Red Hat Directory Server (RHDS) instances, you must establish _replication agreements_. These agreements define how data changes are synchronized between a supplier (source) and a consumer (destination) server for a specific directory suffix.
+
+This section delves into the technical details of replication agreements, explaining their purpose, key components, and how to effectively manage them using the `dsconf` and `dsidm` command-line utilities.
+
+== Understanding Replication Agreements
+
+A replication agreement is a configuration entry within the directory that specifies the parameters for data synchronization between two directory servers. It dictates which directory suffix is replicated, which server is the supplier, which is the consumer, and how the replication process should be handled.
+
+Imagine you have two RHDS instances, `server1.example.com` and `server2.example.com`, both hosting the `dc=example,dc=com` suffix. To keep `server2` updated with changes made on `server1`, you would establish a replication agreement on `server1` that targets `server2` for the `dc=example,dc=com` suffix.
+
+=== Key Components of a Replication Agreement
+
+Each replication agreement defines several crucial parameters:
+
+*   **Supplier (Source) Server**: The RHDS instance from which data changes originate. The agreement is configured on this server.
+*   **Consumer (Destination) Server**: The RHDS instance that receives data changes from the supplier.
+*   **Suffix**: The specific branch of the directory information tree (DIT), also known as a naming context or database, that will be replicated. A server can host multiple suffixes, and each suffix requires its own replication agreement for each consumer.
+*   **Replication Manager Credentials**: A dedicated user account (or the directory manager) with sufficient privileges to perform replication operations. This typically involves a `uid=replication manager` or `cn=replication manager` entry.
+*   **Bind Method**: How the replication manager authenticates to the consumer (e.g., Simple bind, SASL).
+*   **Transport Security**: Whether replication traffic is encrypted using TLS/SSL (recommended for production environments).
+*   **Port**: The LDAP/LDAPS port of the consumer server.
+*   **Replication Schedule**: Defines when replication should occur (e.g., continuous, hourly, specific times).
+*   **Replication Priority**: In multi-supplier environments, this can influence which updates are prioritized.
+*   **Fractional Replication**: Allows you to specify which attributes or object classes should *not* be replicated, effectively excluding them from the replication stream.
+
+=== Replication Manager Account
+
+For secure and reliable replication, it is best practice to create a dedicated replication manager user account on *both* the supplier and consumer servers. This account needs specific Access Control Instructions (ACIs) to permit it to read and write replication-specific attributes, as well as read and apply changes to the replicated data.
+
+A typical replication manager entry might look like this:
+
+[source,ldif]
+----
+dn: uid=replmanager,cn=users,cn=accounts,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: replmanager
+cn: Replication Manager
+sn: Manager
+userPassword: {SSHA}hashedpassword
+----
+
+ACIs for the replication manager user are automatically configured when you enable replication on a suffix, but it's important to understand their purpose.
+
+== Managing Replication Agreements with `dsconf`
+
+The `dsconf` utility is a powerful command-line tool for managing Red Hat Directory Server instances. It provides a consistent interface for configuring various server settings, including replication agreements.
+
+=== Enabling Replication on a Suffix
+
+Before you can create a replication agreement for a suffix, you must enable replication for that suffix on the supplier server. This involves initializing the replication status of the suffix.
+
+*   On the *supplier* server, enable replication for the `dc=example,dc=com` suffix:
+
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 suffix enable-replication --suffix "dc=example,dc=com" -w your_dm_password
+----
+
+=== Creating a Replication Agreement with `dsconf`
+
+To create a replication agreement, you specify the target consumer server, the suffix, and the authentication details for the replication manager.
+
+.Syntax for `dsconf replication create`
+[source,console]
+----
+dsconf <instance_host> replication create \
+    --suffix <suffix_dn> \
+    --host <consumer_hostname_or_ip> \
+    --port <consumer_port> \
+    --bind-dn <replication_manager_bind_dn> \
+    --bind-passwd <replication_manager_password> \
+    --agreement-name <unique_agreement_name> \
+    [--transport <ssl|starttls|plain>] \
+    [--schedule <frequency>] \
+    [--compressed <true|false>] \
+    [--init <true|false>]
+----
+
+*   `--suffix`: The DN of the suffix to be replicated (e.g., `dc=example,dc=com`).
+*   `--host`: The hostname or IP address of the consumer server.
+*   `--port`: The LDAP or LDAPS port on the consumer server.
+*   `--bind-dn`: The DN of the replication manager user.
+*   `--bind-passwd`: The password for the replication manager user.
+*   `--agreement-name`: A unique, descriptive name for the replication agreement (e.g., `to-server2-for-example-com`).
+*   `--transport`: Specifies the security for the connection (`ssl` for LDAPS, `starttls` for STARTTLS, `plain` for unencrypted LDAP - *not recommended*).
+*   `--schedule`: How often replication occurs (e.g., `continuous`, `hourly`, `daily`, `at=HH:MM`). Defaults to `continuous`.
+*   `--compressed`: Whether to compress data during replication (`true` or `false`).
+*   `--init`: If set to `true`, this initiates a full data initialization of the consumer from the supplier *after* the agreement is created. Use with caution, especially in existing environments.
+
+==== Hands-on Lab: Creating a Replication Agreement with `dsconf`
+
+In this lab, you will configure a basic multi-supplier replication agreement between two RHDS instances: `server1.example.com` (supplier) and `server2.example.com` (consumer). We'll assume the suffix `dc=example,dc=com` exists on both servers.
+
+**Prerequisites:**
+
+*   Two RHEL 9 systems with RHDS 13 installed and running.
+    *   `server1.example.com` (IP: `192.168.122.101`)
+    *   `server2.example.com` (IP: `192.168.122.102`)
+*   Both servers are listening on LDAPS port `636`.
+*   The `dc=example,dc=com` suffix has been created on both instances (e.g., using `dscreate create-suffix`).
+*   The Directory Manager password for both instances is `P@ssword123`.
+*   Firewalld is configured to allow port 636 on both servers.
+    *   `sudo firewall-cmd --add-port=636/tcp --permanent`
+    *   `sudo firewall-cmd --reload`
+
+**Steps:**
+
+. *On `server1.example.com`*, create a dedicated replication manager user. This user will be used by `server1` to bind to `server2` for replication, and vice versa.
++
+[source,bash]
+----
+ldapadd -H ldaps://server1.example.com -p 636 -D "cn=Directory Manager" -w 'P@ssword123' <<EOF
+dn: uid=replmanager,cn=users,cn=accounts,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: replmanager
+cn: Replication Manager
+sn: Manager
+userPassword: P@ssword123
+EOF
+----
+
+. *On `server2.example.com`*, create the *same* replication manager user.
++
+[source,bash]
+----
+ldapadd -H ldaps://server2.example.com -p 636 -D "cn=Directory Manager" -w 'P@ssword123' <<EOF
+dn: uid=replmanager,cn=users,cn=accounts,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: replmanager
+cn: Replication Manager
+sn: Manager
+userPassword: P@ssword123
+EOF
+----
+
+. *On `server1.example.com`*, enable replication for the `dc=example,dc=com` suffix.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 suffix enable-replication --suffix "dc=example,dc=com" -w 'P@ssword123'
+----
+
+. *On `server2.example.com`*, enable replication for the `dc=example,dc=com` suffix.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server2.example.com:636 suffix enable-replication --suffix "dc=example,dc=com" -w 'P@ssword123'
+----
+
+. *On `server1.example.com`*, create a replication agreement to `server2.example.com`.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication create \
+    --suffix "dc=example,dc=com" \
+    --host server2.example.com \
+    --port 636 \
+    --bind-dn "uid=replmanager,cn=users,cn=accounts,dc=example,dc=com" \
+    --bind-passwd 'P@ssword123' \
+    --agreement-name "Agreement_to_server2" \
+    --transport ssl \
+    --schedule continuous \
+    -w 'P@ssword123'
+----
+
+. *On `server2.example.com`*, create a replication agreement to `server1.example.com` (for multi-supplier replication).
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server2.example.com:636 replication create \
+    --suffix "dc=example,dc=com" \
+    --host server1.example.com \
+    --port 636 \
+    --bind-dn "uid=replmanager,cn=users,cn=accounts,dc=example,dc=com" \
+    --bind-passwd 'P@ssword123' \
+    --agreement-name "Agreement_to_server1" \
+    --transport ssl \
+    --schedule continuous \
+    -w 'P@ssword123'
+----
+
+. *Verify the agreement on `server1.example.com`*:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication list --suffix "dc=example,dc=com" -w 'P@ssword123'
+----
++
+You should see output similar to this, detailing your newly created agreement:
++
+[source,console]
+----
+Agreement Name: Agreement_to_server2
+  Connection to: server2.example.com:636
+  Suffix: dc=example,dc=com
+  Bind DN: uid=replmanager,cn=users,cn=accounts,dc=example,dc=com
+  Transport: ssl
+  Schedule: continuous
+  ...
+----
+
+. *Verify the agreement on `server2.example.com`*:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server2.example.com:636 replication list --suffix "dc=example,dc=com" -w 'P@ssword123'
+----
++
+You should see `Agreement_to_server1` listed.
+
+. *Test replication*:
+    a. *On `server1.example.com`*, add a new user entry:
+    +
+    [source,bash]
+    ----
+    ldapadd -H ldaps://server1.example.com -p 636 -D "cn=Directory Manager" -w 'P@ssword123' <<EOF
+    dn: uid=jdoe,cn=users,cn=accounts,dc=example,dc=com
+    objectClass: top
+    objectClass: person
+    objectClass: organizationalPerson
+    objectClass: inetOrgPerson
+    uid: jdoe
+    cn: John Doe
+    sn: Doe
+    userPassword: P@ssword123
+    EOF
+    ----
+    b. *On `server2.example.com`*, search for the new user. It might take a few seconds for continuous replication.
+    +
+    [source,bash]
+    ----
+    ldapsearch -H ldaps://server2.example.com -p 636 -D "cn=Directory Manager" -w 'P@ssword123' \
+        -b "dc=example,dc=com" "(uid=jdoe)" uid cn
+    ----
+    +
+    You should see `uid=jdoe,cn=John Doe` in the search results, confirming replication is working.
+
+=== Listing Replication Agreements with `dsconf`
+
+To view all replication agreements configured on a server for a specific suffix:
+
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication list --suffix "dc=example,dc=com" -w 'P@ssword123'
+----
+This command provides a summary of all agreements, including their names, target hosts, ports, and associated suffixes.
+
+=== Modifying a Replication Agreement with `dsconf`
+
+You can modify an existing replication agreement to change parameters like the schedule, bind password, or transport security.
+
+.Syntax for `dsconf replication set`
+[source,console]
+----
+dsconf <instance_host> replication set \
+    --suffix <suffix_dn> \
+    --agreement-name <unique_agreement_name> \
+    --new-schedule <frequency> \
+    [--new-bind-passwd <new_password>] \
+    [...]
+----
+
+*   `--new-schedule`: Change the replication schedule (e.g., `hourly`).
+*   `--new-bind-passwd`: Update the replication manager's bind password.
+*   Other options like `--new-host`, `--new-port`, `--new-transport` can also be used.
+
+==== Hands-on Lab: Modifying a Replication Agreement with `dsconf`
+
+. *On `server1.example.com`*, change the schedule of `Agreement_to_server2` from `continuous` to `hourly`.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication set \
+    --suffix "dc=example,dc=com" \
+    --agreement-name "Agreement_to_server2" \
+    --new-schedule hourly \
+    -w 'P@ssword123'
+----
+
+. *Verify the change*:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication list --suffix "dc=example,dc=com" -w 'P@ssword123'
+----
++
+The output for `Agreement_to_server2` should now show `Schedule: hourly`.
+
+=== Deleting a Replication Agreement with `dsconf`
+
+To remove a replication agreement, use the `replication delete` command, specifying the suffix and agreement name.
+
+.Syntax for `dsconf replication delete`
+[source,console]
+----
+dsconf <instance_host> replication delete \
+    --suffix <suffix_dn> \
+    --agreement-name <unique_agreement_name>
+----
+
+==== Hands-on Lab: Deleting a Replication Agreement with `dsconf`
+
+. *On `server1.example.com`*, delete the `Agreement_to_server2` agreement.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication delete \
+    --suffix "dc=example,dc=com" \
+    --agreement-name "Agreement_to_server2" \
+    -w 'P@ssword123'
+----
+
+. *Verify the deletion*:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication list --suffix "dc=example,dc=com" -w 'P@ssword123'
+----
++
+`Agreement_to_server2` should no longer appear in the list.
+
+[NOTE]
+Deleting a replication agreement on the supplier server stops that server from sending updates to the specified consumer for that suffix. It does *not* remove the agreement from the consumer if it was a multi-supplier setup, nor does it clean up the consumer's data. You'll likely need to delete the corresponding agreement on the consumer as well if it's no longer needed.
+
+== Managing Replication Agreements with `dsidm`
+
+The `dsidm` utility is used for managing RHDS instances and their core configurations, including replication. While `dsconf` focuses on granular server settings, `dsidm` often provides higher-level commands that interact with the instance's directory tree.
+
+The general syntax for `dsidm` replication commands is:
+
+[source,console]
+----
+dsidm <instance_name> replication <action> [options]
+----
+
+Where `<instance_name>` refers to the unique name of your RHDS instance (e.g., `ds-instance`). You can find this name using `dsctl status`.
+
+=== Listing Replication Agreements with `dsidm`
+
+To list replication agreements for a specific instance:
+
+[source,bash]
+----
+dsidm <instance_name> replication list --suffix <suffix_dn>
+----
+
+==== Hands-on Lab: Listing Replication Agreements with `dsidm`
+
+Let's assume your instance name on `server2.example.com` is `ds-server2`.
+
+. *On `server2.example.com`*, first ensure the `Agreement_to_server1` agreement still exists (from the previous `dsconf` lab). If not, recreate it.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server2.example.com:636 replication create \
+    --suffix "dc=example,dc=com" \
+    --host server1.example.com \
+    --port 636 \
+    --bind-dn "uid=replmanager,cn=users,cn=accounts,dc=example,dc=com" \
+    --bind-passwd 'P@ssword123' \
+    --agreement-name "Agreement_to_server1" \
+    --transport ssl \
+    --schedule continuous \
+    -w 'P@ssword123'
+----
+
+. *Determine your instance name* (if you don't already know it).
++
+[source,bash]
+----
+dsctl status
+----
++
+You'll see output like `Instance: ds-server2 (running)`.
+
+. *List replication agreements using `dsidm`*:
++
+[source,bash]
+----
+dsidm ds-server2 replication list --suffix "dc=example,dc=com"
+----
++
+You should see output similar to what `dsconf replication list` provided, confirming the agreement.
+
+=== Creating a Replication Agreement with `dsidm`
+
+The `dsidm` command for creating replication agreements is similar to `dsconf`, but uses the instance name.
+
+.Syntax for `dsidm replication create`
+[source,console]
+----
+dsidm <instance_name> replication create \
+    --suffix <suffix_dn> \
+    --replica-host <consumer_hostname_or_ip> \
+    --replica-port <consumer_port> \
+    --bind-dn <replication_manager_bind_dn> \
+    --bind-password <replication_manager_password> \
+    --agreement-name <unique_agreement_name> \
+    [--transport <ssl|starttls|plain>] \
+    [--schedule <frequency>] \
+    [--compressed <true|false>] \
+    [--initialize <true|false>]
+----
+
+Note the subtle differences in parameter names like `--replica-host` and `--replica-port` instead of `--host` and `--port`, and `--bind-password` instead of `--bind-passwd`.
+
+==== Hands-on Lab: Creating a Replication Agreement with `dsidm`
+
+Let's re-create the agreement from `server1` to `server2` using `dsidm`. Ensure you have deleted it previously using `dsconf replication delete`.
+
+. *On `server1.example.com`*, ensure `Agreement_to_server2` is deleted.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldaps://server1.example.com:636 replication delete \
+    --suffix "dc=example,dc=com" \
+    --agreement-name "Agreement_to_server2" \
+    -w 'P@ssword123'
+----
+
+. *Determine the instance name for `server1`*:
++
+[source,bash]
+----
+dsctl status
+----
++
+Let's assume it's `ds-server1`.
+
+. *On `server1.example.com`*, create the replication agreement to `server2.example.com` using `dsidm`:
++
+[source,bash]
+----
+dsidm ds-server1 replication create \
+    --suffix "dc=example,dc=com" \
+    --replica-host server2.example.com \
+    --replica-port 636 \
+    --bind-dn "uid=replmanager,cn=users,cn=accounts,dc=example,dc=com" \
+    --bind-password 'P@ssword123' \
+    --agreement-name "Agreement_to_server2_via_dsidm" \
+    --transport ssl \
+    --schedule continuous
+----
++
+You will be prompted for the Directory Manager password.
+
+. *Verify the agreement using `dsidm`*:
++
+[source,bash]
+----
+dsidm ds-server1 replication list --suffix "dc=example,dc=com"
+----
++
+You should see `Agreement_to_server2_via_dsidm` listed.
+
+=== Modifying a Replication Agreement with `dsidm`
+
+Similar to `dsconf set`, `dsidm replication set` allows modification of agreement parameters.
+
+.Syntax for `dsidm replication set`
+[source,console]
+----
+dsidm <instance_name> replication set \
+    --suffix <suffix_dn> \
+    --agreement-name <unique_agreement_name> \
+    [--new-schedule <frequency>] \
+    [--new-bind-password <new_password>] \
+    [...]
+----
+
+==== Hands-on Lab: Modifying a Replication Agreement with `dsidm`
+
+. *On `server1.example.com`*, change the schedule of `Agreement_to_server2_via_dsidm` to `daily`.
++
+[source,bash]
+----
+dsidm ds-server1 replication set \
+    --suffix "dc=example,dc=com" \
+    --agreement-name "Agreement_to_server2_via_dsidm" \
+    --new-schedule daily
+----
++
+Enter the Directory Manager password when prompted.
+
+. *Verify the change*:
++
+[source,bash]
+----
+dsidm ds-server1 replication list --suffix "dc=example,dc=com"
+----
++
+The output should now show `Schedule: daily`.
+
+=== Deleting a Replication Agreement with `dsidm`
+
+To remove a replication agreement, use the `replication delete` command.
+
+.Syntax for `dsidm replication delete`
+[source,console]
+----
+dsidm <instance_name> replication delete \
+    --suffix <suffix_dn> \
+    --agreement-name <unique_agreement_name>
+----
+
+==== Hands-on Lab: Deleting a Replication Agreement with `dsidm`
+
+. *On `server1.example.com`*, delete the `Agreement_to_server2_via_dsidm` agreement.
++
+[source,bash]
+----
+dsidm ds-server1 replication delete \
+    --suffix "dc=example,dc=com" \
+    --agreement-name "Agreement_to_server2_via_dsidm"
+----
++
+Enter the Directory Manager password when prompted.
+
+. *Verify the deletion*:
++
+[source,bash]
+----
+dsidm ds-server1 replication list --suffix "dc=example,dc=com"
+----
++
+The agreement should no longer be listed.
+
+== Expert Insights and Troubleshooting
+
+*   **Firewall Issues**: A common cause of replication failure is blocked network ports. Ensure that the LDAP/LDAPS port (typically 389/636) is open between supplier and consumer servers.
+*   **Replication Manager Privileges**: The replication manager user must have sufficient ACIs on *both* servers to read and write entries within the replicated suffix and specific replication-related entries (`cn=replication,cn=config`). `dsconf enable-replication` usually sets these up automatically, but manual intervention might be needed for complex scenarios.
+*   **Bind DN/Password Mismatch**: Double-check the `--bind-dn` and `--bind-passwd` (or `--bind-password`) parameters. Even a single character error will prevent authentication.
+*   **SSL/TLS Certificate Issues**: If using `ssl` or `starttls`, ensure that the certificates are valid, trusted, and correctly configured on both ends. Certificate common names (CNs) or Subject Alternative Names (SANs) must match the server hostnames used in the replication agreement.
+*   **Schema Mismatch**: While not directly related to agreement creation, significant schema differences between servers can cause replication failures or data inconsistencies. Ensure schemas are synchronized before initiating replication.
+*   **Clock Skew**: Time differences between replication partners can cause issues with change tracking and conflict resolution. Ensure NTP is configured to synchronize clocks across all RHDS servers.
+*   **Monitoring Replication Status**:
+    *   Use `dsconf <instance_host> replication status --suffix <suffix_dn>` to get a detailed view of replication progress and any errors.
+    *   Monitor RHDS error logs (e.g., `/var/log/dirsrv/slapd-<instance_name>/errors`) for replication-specific error messages.
+    *   Perform `ldapsearch` queries on the `cn=replication,cn=config` entry (or its subtree) on the supplier to inspect the state of the replication agreement and its internal attributes.
+
+[TIP]
+Always use LDAPS (port 636 with `--transport ssl`) or STARTTLS (`--transport starttls`) for replication agreements in production environments to protect sensitive directory data during transit. Avoid `--transport plain`.

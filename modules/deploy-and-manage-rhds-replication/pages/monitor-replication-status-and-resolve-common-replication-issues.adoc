@@ -1,0 +1,510 @@
+#  Monitor replication status and resolve common replication issues.
+
+= Monitoring and Troubleshooting RHDS Replication
+
+Understanding and maintaining the health of your Red Hat Directory Server (RHDS) replication topology is critical for ensuring data consistency, high availability, and disaster recovery. This section will guide you through monitoring replication status and diagnosing common replication issues that can arise in an enterprise environment.
+
+== Introduction to Replication Monitoring
+
+Replication ensures that changes made on one Directory Server instance (the *supplier*) are propagated to other instances (the *consumers*). A robust monitoring strategy allows administrators to proactively identify and resolve potential problems before they impact users or applications.
+
+Key indicators of healthy replication include:
+
+*   **Timely Updates**: Changes on a supplier are reflected on consumers within an expected timeframe.
+*   **Data Consistency**: All replicas hold the same, accurate data for the replicated suffixes.
+*   **No Errors**: Replication processes run without errors logged in server logs.
+*   **Agreement Status**: Replication agreements are established and active between all configured partners.
+
+== Monitoring Replication Status
+
+RHDS provides several tools and methods to check the status of your replication topology.
+
+=== Using `dsreplication` for an Overview
+
+The `dsreplication` utility is a primary tool for managing and monitoring replication. It offers a quick and comprehensive view of the replication status across your Directory Server instances.
+
+.Checking Global Replication Status
+The `dsreplication status` command provides an overview of all replication agreements configured on the server where the command is executed.
+
+[source,bash]
+----
+$ dsreplication status -D "cn=Directory Manager" -w "password" -h localhost -p 389
+----
+
+.Example Output
+[source]
+----
+Dsreplication Status
+
+Supplier : ds1.example.com:389
+  Replica ID : 1
+  Replication Enabled : yes
+  Replication Agreements :
+    agreement with ds2.example.com:389 (ID 2):
+      Status : Up
+      Last Update : 2023-10-27 10:30:05 UTC
+      Total changes : 123456
+      Remaining changes : 0
+      Average update time : 0.005 seconds
+    agreement with ds3.example.com:389 (ID 3):
+      Status : Up
+      Last Update : 2023-10-27 10:29:58 UTC
+      Total changes : 123450
+      Remaining changes : 0
+      Average update time : 0.007 seconds
+----
+
+*   **Supplier**: The hostname and port of the current server.
+*   **Replica ID**: A unique identifier for this server instance in the replication topology.
+*   **Replication Enabled**: Indicates if replication is generally active.
+*   **Agreement with**: Identifies the remote server (consumer) in the agreement.
+*   **Status**: Should ideally be `Up`. `Down` indicates a problem.
+*   **Last Update**: Timestamp of the last successful replication synchronization.
+*   **Total changes**: The total number of changes processed by this agreement.
+*   **Remaining changes**: The number of changes waiting to be replicated to the consumer. A non-zero value here indicates replication lag.
+
+.Hands-on Lab: Check Replication Status
+In this lab, you will check the replication status of your RHDS instance.
+
+.Prerequisites
+*   An RHDS instance with at least one replication agreement configured (e.g., between two servers, `rhds1.example.com` and `rhds2.example.com`).
+*   Directory Manager credentials.
+
+.Steps
+. Log in to `rhds1.example.com` as the `root` user or a user with `sudo` privileges.
+. Execute the `dsreplication status` command, replacing `password` with your Directory Manager password and adjusting the hostname/port if necessary.
++
+[source,bash]
+----
+$ dsreplication status -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389
+----
+. Analyze the output:
+    *   Verify that the `Status` for all agreements is `Up`.
+    *   Check `Remaining changes`. If this value is consistently zero or very low, replication is healthy. If it's a growing positive number, there's a replication delay.
+    *   Note the `Last Update` timestamp to ensure recent activity.
+
+.Getting Detailed Replication Information
+For more in-depth information about replication agreements, including specific consumer and supplier entries, use the `--replication-info` option.
+
+[source,bash]
+----
+$ dsreplication status --replication-info -D "cn=Directory Manager" -w "password" -h localhost -p 389
+----
+
+This output provides granular details for each replica, including internal state, RUV (Replication Update Vector) information, and the current changelog ID. This information is crucial for advanced troubleshooting.
+
+=== Using `ldapsearch` for Granular Details
+
+While `dsreplication` provides a high-level overview, `ldapsearch` allows you to query the actual configuration entries for replication, offering fine-grained details.
+
+.Searching Replication Agreements
+Replication agreements are stored under the `cn=replication,cn=config` entry. Each agreement is an `nsds5replicationagreement` object.
+
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "password" -h localhost -p 389 \
+  -b "cn=replication,cn=config" \
+  "(objectclass=nsds5replicationagreement)"
+----
+
+.Interpreting Key Attributes
+Look for the following attributes within the `nsds5replicationagreement` entries:
+
+*   `nsds5ReplicaLastUpdateStart`: Timestamp when the last replication update started.
+*   `nsds5ReplicaLastUpdateEnd`: Timestamp when the last replication update completed.
+*   `nsds5ReplicaUpdateInProgress`: `TRUE` if an update is currently active, `FALSE` otherwise.
+*   `nsds5ReplicaChangesPending`: Number of changes pending replication. Equivalent to `Remaining changes` in `dsreplication status`.
+*   `nsds5ReplicaInterval`: The frequency (in seconds) at which the supplier polls the consumer for changes.
+*   `nsds5ReplicaBindDN`: The DN used by the supplier to bind to the consumer.
+*   `nsds5ReplicaBindMethod`: The authentication method (e.g., `simple`, `SASL`).
+*   `nsds5ReplicaPort`: The port on the consumer server.
+*   `nsds5ReplicaHost`: The hostname or IP of the consumer server.
+
+.Searching Changelog Consumer Entries
+Each replicated suffix on a consumer has a corresponding changelog consumer entry, typically named `cn=changelogX,cn=replication,cn=config` (where `X` is the replica ID of the supplier).
+
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "password" -h localhost -p 389 \
+  -b "cn=replication,cn=config" \
+  "(&(objectclass=nsds5replicationconsumer)(cn=changelog*))"
+----
+
+.Interpreting Changelog Consumer Attributes
+*   `nsds5ReplicaChangelogWindow`: This attribute is crucial. It indicates the *maximum change number* that the consumer has successfully processed from the supplier's changelog. By comparing this value across different consumers for the same supplier, you can identify which consumers are lagging.
+*   `nsds5ReplicaLastCommitId`: The last change ID successfully committed by this consumer.
+
+.Hands-on Lab: Query Replication Attributes with `ldapsearch`
+You will use `ldapsearch` to retrieve detailed replication agreement information.
+
+.Prerequisites
+*   An RHDS instance with replication configured.
+*   Directory Manager credentials.
+
+.Steps
+. Log in to `rhds1.example.com`.
+. Execute the `ldapsearch` command to retrieve replication agreements:
++
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 \
+  -b "cn=replication,cn=config" \
+  "(objectclass=nsds5replicationagreement)"
+----
+. Examine the output, focusing on `nsds5ReplicaLastUpdateStart`, `nsds5ReplicaLastUpdateEnd`, `nsds5ReplicaChangesPending`, `nsds5ReplicaHost`, and `nsds5ReplicaPort`. These attributes provide a detailed view of the agreement's operational state.
+. Now, query the changelog consumer entries:
++
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 \
+  -b "cn=replication,cn=config" \
+  "(&(objectclass=nsds5replicationconsumer)(cn=changelog*))"
+----
+. Locate the `nsds5ReplicaChangelogWindow` attribute. This value helps pinpoint the exact point in the supplier's changelog up to which the consumer has successfully synchronized.
+
+=== Checking Server Logs
+
+RHDS logs are an invaluable resource for troubleshooting replication issues.
+
+*   `/var/log/dirsrv/slapd-INSTANCE_NAME/errors`: The primary log for errors, warnings, and general server activity. Look for messages related to `repl` or `replication`.
+*   `/var/log/dirsrv/slapd-INSTANCE_NAME/access`: Records client connection, bind, search, and modify operations. Useful for verifying that the replication bind DN is successfully authenticating.
+*   `/var/log/dirsrv/slapd-INSTANCE_NAME/audit`: (If enabled) Records sensitive operations.
+
+.Example of a replication error in `errors` log:
+[source,text]
+----
+[27/Oct/2023:10:35:01.234567890 +0000] NSMMReplicationPlugin - changelog-history: The replica has not synchronized for 600 seconds. Consider forcing a synchronization.
+[27/Oct/2023:10:35:05.123456789 +0000] NSMMReplicationPlugin - agmt="agreement with ds2.example.com" (ds2.example.com:389): Unable to connect to replica. Error: PR_CONNECT_RESET_ERROR
+----
+
+*TIP:* Configure a higher replication log level in `cn=config` (e.g., `nsslapd-logging-level: 256` for replication-specific debug messages) when actively troubleshooting, but revert it for normal operations to avoid excessive log growth.
+
+== Common Replication Issues and Resolutions
+
+Here are some common replication problems you might encounter and steps to resolve them.
+
+=== Replication Lag/Delay
+
+*Symptoms*: Changes made on a supplier server are not appearing on the consumer server within an expected timeframe. `dsreplication status` shows a positive, growing `Remaining changes` count.
+
+*Causes*:
+*   Network latency or saturation.
+*   High server load on either supplier or consumer.
+*   Changelog issues (e.g., consumer unable to process changes quickly enough, or changelog on supplier rolling over too fast).
+*   Inefficient indexing on the consumer slowing down updates.
+
+*Resolution*:
+.  **Check Network Connectivity**:
+    *   Ping the consumer from the supplier and vice-versa.
+    *   Use `telnet` or `nc` to verify that the LDAP port (389 or 636) is open and accessible between the servers.
+    +
+    [source,bash]
+    ----
+    $ telnet consumer.example.com 389
+    ----
+.  **Monitor System Resources**:
+    *   Check CPU, memory, and disk I/O on both supplier and consumer using tools like `top`, `htop`, `vmstat`, `iostat`. High utilization can lead to delays.
+.  **Examine Changelog Window**:
+    *   On the consumer, check the `nsds5ReplicaChangelogWindow` attribute for the relevant changelog consumer entry using `ldapsearch`. Compare it to the latest change ID on the supplier. A large gap indicates significant lag.
+.  **Review Supplier Changelog Configuration**:
+    *   Ensure the supplier's changelog is large enough to hold changes until all consumers can retrieve them. Adjust `nsslapd-changelogmaxentryage` and `nsslapd-changelogmaxentries` if necessary (in `cn=config`).
+    +
+    [source,bash]
+    ----
+    # Example: Increase max entries to 500,000, max age to 7 days
+    $ ldapmodify -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 << EOF
+    dn: cn=config
+    changetype: modify
+    replace: nsslapd-changelogmaxentries
+    nsslapd-changelogmaxentries: 500000
+    -
+    replace: nsslapd-changelogmaxentryage
+    nsslapd-changelogmaxentryage: 7d
+    EOF
+    ----
+.  **Optimize Consumer Indexing**:
+    *   If the consumer is slow to apply updates, ensure that all attributes used frequently in directory operations (especially those involved in replication updates) are indexed. Refer to the "Implement attribute indexing" objective for details.
+.  **Restart Directory Server**: Sometimes a simple restart can resolve transient issues, but investigate the root cause first.
+
+=== Unsynced Replicas / Data Divergence
+
+*Symptoms*: Data on the supplier and consumer servers do not match. `ldapsearch` operations reveal different attribute values or missing entries. `dsreplication status` might show `Remaining changes` as zero, but data is still inconsistent.
+
+*Causes*:
+*   Failed updates due to schema mismatch or constraint violations.
+*   Manual modifications directly on a consumer without being replicated back (in a multi-supplier setup).
+*   Replication errors that went unnoticed.
+
+*Resolution*:
+.  **Check Server Logs**: Look for specific error messages in the `errors` log indicating why certain updates might have failed (e.g., `attribute type not found`, `entry already exists`, `constraint violation`).
+.  **Compare Schema**: Ensure that the `cn=schema,cn=config` entries are identical on all replicated servers. A schema mismatch will prevent replication of entries or attributes not defined on all servers.
+.  **Force Synchronization**: If you suspect minor inconsistencies, you can force a full synchronization from a supplier to a consumer.
++
+[source,bash]
+----
+$ dsreplication force-synchronization \
+  --supplier-host rhds1.example.com --supplier-port 389 \
+  --consumer-host rhds2.example.com --consumer-port 389 \
+  -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD"
+----
++
+*WARNING:* Forcing synchronization can be resource-intensive and may cause temporary performance degradation. Use it during off-peak hours if possible.
+.  **Initialize Replica (Last Resort)**: If forced synchronization doesn't resolve the issue, or if the data divergence is significant, the most robust solution is to reinitialize the consumer replica. This process will delete the existing database on the consumer and re-copy all data from the supplier.
++
+[source,bash]
+----
+# On the consumer (rhds2.example.com)
+$ dsctl stop slapd@instance_name
+$ dsreplication initialize \
+  --supplier-host rhds1.example.com --supplier-port 389 \
+  --consumer-host rhds2.example.com --consumer-port 389 \
+  --suffix "dc=example,dc=com" \
+  -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD"
+$ dsctl start slapd@instance_name
+----
++
+*WARNING:* Initializing a replica deletes all existing data for the specified suffix on the consumer. Ensure you have a valid backup or are confident in the supplier's data integrity before proceeding.
+
+.Hands-on Lab: Forcing Synchronization
+You will simulate a replication lag and then use `force-synchronization`.
+
+.Prerequisites
+*   Two RHDS instances, `rhds1.example.com` and `rhds2.example.com`, with multi-supplier replication configured for `dc=example,dc=com`.
+*   Directory Manager credentials.
+
+.Steps
+. Log in to `rhds1.example.com`.
+. Create a new entry that will be replicated.
++
+[source,bash]
+----
+$ ldapadd -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 << EOF
+dn: uid=testuser1,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: testuser1
+cn: Test User One
+sn: User
+mail: testuser1@example.com
+userPassword: password
+EOF
+----
+. Log in to `rhds2.example.com` and immediately check if the entry has replicated. It might not appear instantly due to replication intervals.
++
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 \
+  -b "dc=example,dc=com" "(uid=testuser1)"
+----
+. If the entry is not found on `rhds2.example.com` after a reasonable wait (e.g., 30 seconds), it indicates a potential lag. Now, force synchronization *from* `rhds1` *to* `rhds2`.
++
+[source,bash]
+----
+# Execute this on rhds1.example.com
+$ dsreplication force-synchronization \
+  --supplier-host rhds1.example.com --supplier-port 389 \
+  --consumer-host rhds2.example.com --consumer-port 389 \
+  -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD"
+----
++
+You should see output similar to:
++
+[source]
+----
+Forcing synchronization from rhds1.example.com:389 to rhds2.example.com:389...
+Synchronization started successfully.
+----
+. After the command completes, re-check `rhds2.example.com` for `uid=testuser1`. It should now be present.
++
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 \
+  -b "dc=example,dc=com" "(uid=testuser1)"
+----
+
+=== Replication Agreement Not Established / Connection Issues
+
+*Symptoms*: `dsreplication status` shows an agreement as `Down` or `Error`. Logs indicate connection failures or authentication problems.
+
+*Causes*:
+*   Incorrect hostname or IP address in the replication agreement.
+*   Firewall blocking the LDAP/LDAPS port.
+*   Port not listening on the consumer server.
+*   Authentication failure (incorrect bind DN or password).
+*   SSL/TLS certificate issues (e.g., expired, untrusted, hostname mismatch).
+
+*Resolution*:
+.  **Verify Network Connectivity**:
+    *   Ensure the supplier can reach the consumer's LDAP/LDAPS port.
+    +
+    [source,bash]
+    ----
+    # On supplier:
+    $ ping consumer.example.com
+    $ telnet consumer.example.com 389  # or 636 for LDAPS
+    ----
+    *   Check firewall rules (`firewall-cmd --list-all --zone=public`) on both servers to ensure the necessary ports are open.
+.  **Check Replication Agreement Configuration**:
+    *   Use `ldapsearch` to retrieve the `nsds5replicationagreement` entry for the problematic agreement. Verify `nsds5ReplicaHost`, `nsds5ReplicaPort`, `nsds5ReplicaBindDN`, and ensure the bind password is correct using `dsconf`.
+.  **Test Bind Credentials**:
+    *   Attempt a simple `ldapbind` from the supplier to the consumer using the replication agreement's bind DN and password.
+    +
+    [source,bash]
+    ----
+    $ ldapbind -x -D "cn=replication manager,cn=config" -w "REPLICATION_PASSWORD" -h consumer.example.com -p 389
+    ----
+.  **Check SSL/TLS Certificates**:
+    *   If using LDAPS (port 636) or STARTTLS, verify that certificates are valid, not expired, and trusted by both servers. Use `openssl s_client` to inspect the certificate chain. Refer to the "Implement Security for Red Hat Directory Server 13" objective for certificate management.
+.  **Restart Directory Server**: Sometimes connection pools or network handles can get stuck; a restart might clear them.
+
+=== Schema Mismatch
+
+*Symptoms*: Replication errors such as "attribute type not found," "object class not found," or "entry fails schema check" appear in the logs.
+
+*Causes*:
+*   Schema changes were applied to one server but not replicated to others.
+*   Manual, inconsistent schema modifications on different servers.
+
+*Resolution*:
+.  **Compare `cn=schema,cn=config`**:
+    *   Export the schema from a known good server and compare it with the problematic server.
+    +
+    [source,bash]
+    ----
+    $ ldapsearch -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" \
+      -h localhost -p 389 -b "cn=schema,cn=config" > schema_good.ldif
+    ----
+.  **Ensure Schema Replication**: Schema replication should be part of the standard replication process. Verify that `cn=schema,cn=config` is included in your replication agreements.
+.  **Manual Schema Synchronization**: If automatic schema replication fails or is not configured, you might need to manually export the schema from the supplier and import it into the consumer.
+    *   Export schema from the *supplier*.
+    *   Stop the consumer RHDS instance.
+    *   Delete the existing `cn=schema,cn=config` on the consumer (e.g., by moving the schema files).
+    *   Import the good schema LDIF to the consumer using `ldapadd` (or `dsconf schema` utility).
+    *   Start the consumer RHDS instance.
+
+=== Clock Skew
+
+*Symptoms*: Errors related to timestamps, `lastmod` attributes, or changelog processing. Might manifest as data inconsistencies that are hard to track.
+
+*Causes*:
+*   Server clocks are not synchronized (e.g., using NTP).
+
+*Resolution*:
+.  **Implement NTP**: Ensure all RHDS servers and clients in your environment are configured to synchronize their clocks with reliable Network Time Protocol (NTP) servers.
+.  **Verify Time Synchronization**: Use `timedatectl` or `date` to confirm consistent time across all servers.
+
+=== Changelog Issues
+
+*Symptoms*: Replication halts, errors about missing RUV (Replication Update Vector) entries, or gaps in the changelog. The `errors` log might show messages like "changelog history is not sufficient."
+
+*Causes*:
+*   Changelog corruption.
+*   The changelog rolled over (old entries were purged) before the consumer could retrieve all pending changes. This often happens if `nsslapd-changelogmaxentryage` or `nsslapd-changelogmaxentries` are set too low.
+*   A supplier crash leading to an inconsistent changelog state.
+
+*Resolution*:
+.  **Increase Changelog Size/Age**: As mentioned under replication lag, ensure your supplier's changelog is configured to retain changes long enough for all consumers to process them.
+.  **Check RUV (Replication Update Vector)**: Use `ldapsearch` to examine the `nsds50RUV` attribute on the base entry of your replicated suffix (e.g., `dn: dc=example,dc=com`). This vector contains information about the last change received from each replica. Inconsistencies here often point to changelog problems.
+.  **Reinitialize Replica**: In most cases of significant changelog issues or corruption, reinitializing the problematic consumer replica from a healthy supplier is the most reliable solution.
+
+=== High CPU/Memory Usage due to Replication
+
+*Symptoms*: Directory Server consumes excessive CPU or memory during replication events, leading to overall performance degradation.
+
+*Causes*:
+*   A very large number of updates being processed by the server or consumer.
+*   Inefficient indexing on the consumer, causing database operations to be slow when applying updates.
+*   Network saturation if replicating huge datasets over a limited bandwidth.
+
+*Resolution*:
+.  **Optimize Indexing**: Ensure the consumer has appropriate indexes for attributes frequently modified during replication.
+.  **Monitor Network**: Check network utilization. If the network is a bottleneck, consider upgrading bandwidth or optimizing data transfer (though RHDS doesn't offer many built-in options for this).
+.  **Adjust Replication Threads**: In `cn=config`, the `nsslapd-threads-replication` attribute can be adjusted. Increasing it might speed up replication on multi-core systems, but too many threads can also lead to contention. Adjust cautiously and monitor performance.
+.  **Tune Database Cache**: Ensure sufficient memory is allocated to the database caches (`nsslapd-cachememsize` for entry cache, `nsslapd-dbcachesize` for database cache) on both supplier and consumer to minimize disk I/O.
+
+.Hands-on Lab: Integrated Troubleshooting Scenario
+In this lab, you will diagnose and resolve a common replication issue where a consumer lags significantly behind its supplier.
+
+.Prerequisites
+*   Two RHDS instances: `rhds1.example.com` (supplier) and `rhds2.example.com` (consumer).
+*   Multi-supplier replication configured for `dc=example,dc=com`.
+*   Directory Manager credentials.
+
+.Scenario Setup
+We'll simulate a consumer falling behind.
+
+.Steps (on `rhds1.example.com`)
+. Create a large number of entries to generate significant changelog activity.
++
+[source,bash]
+----
+for i in $(seq 1 1000); do
+  ldapadd -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 << EOF
+dn: uid=user$i,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: user$i
+cn: Test User $i
+sn: User
+mail: user$i@example.com
+userPassword: password
+EOF
+done
+----
+. After the `ldapadd` loop finishes, immediately check the replication status *on `rhds1.example.com`*:
++
+[source,bash]
+----
+$ dsreplication status -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389
+----
++
+You should observe a non-zero `Remaining changes` count for the agreement pointing to `rhds2.example.com`, indicating a lag.
+
+.Troubleshooting Steps (on `rhds2.example.com`)
+. Log in to `rhds2.example.com`.
+. Check the RHDS `errors` log for any replication-related messages:
++
+[source,bash]
+----
+$ tail -f /var/log/dirsrv/slapd-instance_name/errors
+----
++
+You might see messages indicating slow updates or pending changes.
+. Query the `nsds5ReplicaChangelogWindow` attribute for the changelog consumer entry on `rhds2.example.com` that points to `rhds1.example.com`.
++
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h localhost -p 389 \
+  -b "cn=replication,cn=config" \
+  "(&(objectclass=nsds5replicationconsumer)(nsds5ReplicaHost=rhds1.example.com))" \
+  nsds5ReplicaChangelogWindow
+----
++
+Note the value of `nsds5ReplicaChangelogWindow`. This is the last change ID `rhds2` processed from `rhds1`.
+. Now, query the *supplier's* (rhds1.example.com) latest change ID on the base suffix entry to find the actual current state.
++
+[source,bash]
+----
+$ ldapsearch -x -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD" -h rhds1.example.com -p 389 \
+  -b "dc=example,dc=com" "(objectclass=*)" nsds5ReplicaLastModified
+----
++
+Compare the `nsds5ReplicaLastModified` value from `rhds1` with `nsds5ReplicaChangelogWindow` from `rhds2`. If `nsds5ReplicaLastModified` on `rhds1` is significantly higher, `rhds2` is indeed lagging.
+
+.Resolution (on `rhds1.example.com` or any management host)
+. Force synchronization from `rhds1.example.com` to `rhds2.example.com`.
++
+[source,bash]
+----
+$ dsreplication force-synchronization \
+  --supplier-host rhds1.example.com --supplier-port 389 \
+  --consumer-host rhds2.example.com --consumer-port 389 \
+  -D "cn=Directory Manager" -w "YOUR_DM_PASSWORD"
+----
+. After the synchronization completes, re-check the `dsreplication status` on `rhds1.example.com` and the `nsds5ReplicaChangelogWindow` on `rhds2.example.com`. Both should now reflect a synchronized state (e.g., `Remaining changes: 0`, and `nsds5ReplicaChangelogWindow` should be close to `nsds5ReplicaLastModified`).
+
+By diligently monitoring replication status and understanding the common causes and resolutions for issues, you can maintain a highly available and consistent Red Hat Directory Server environment.

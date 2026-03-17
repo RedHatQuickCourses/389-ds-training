@@ -1,0 +1,10 @@
+#  Implement Security for Red Hat Directory Server 13
+
+Protect Red Hat Directory Server 13 (RHDS) by implementing robust security measures. This involves:
+
+*   Understanding core LDAP authentication and authorization.
+*   Enforcing TLS 1.2/1.3 for secure communication.
+*   Managing server certificates using `certutil` and `dsconf`.
+*   Differentiating and implementing LDAPS and STARTTLS.
+*   Applying strong cipher suites for encryption.
+*   Configuring Access Control Instructions (ACIs) to secure directory data.

@@ -1,0 +1,327 @@
+#  Hands-on Lab: Implement and verify multi-supplier replication.
+
+= Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
+:toc: macro
+:toc-title: On This Page
+
+toc::[]
+
+[[lab-multi-supplier-replication]]
+== Deploy and Manage RHDS Replication
+
+=== Hands-on Lab: Implement and Verify Multi-Supplier Replication
+
+Multi-supplier replication (formerly known as multi-master replication) is a critical feature in Red Hat Directory Server (RHDS) for achieving high availability, fault tolerance, and load distribution. In a multi-supplier setup, multiple directory servers can accept write operations, and changes made on any supplier are automatically replicated to all other suppliers. This ensures data consistency across the environment and provides continuous service even if one supplier becomes unavailable.
+
+This lab will guide you through setting up a basic two-way multi-supplier replication topology between two RHDS instances. You will configure each server to act as both a supplier and a consumer for the other, ensuring that modifications on either server propagate throughout the replication topology.
+
+==== Learning Objectives
+
+Upon completion of this lab, you will be able to:
+
+*   Explain the principles of directory server multi-supplier replication.
+*   Configure two RHDS instances for multi-supplier replication.
+*   Establish and manage replication agreements.
+*   Monitor replication status and verify data synchronization.
+
+==== Prerequisites
+
+Before starting this lab, ensure you have:
+
+*   Two Red Hat Enterprise Linux 9 systems (physical or virtual machines) or two distinct RHDS instances configured on different ports on a single system. For simplicity in this lab, we will assume two RHDS instances, `instance1` and `instance2`, running on the *same host* but using different ports.
+    *   `instance1`: Listening on port `389`. Directory Manager DN: `cn=Directory Manager`, password `password`. Root Suffix: `dc=example,dc=com`.
+    *   `instance2`: Listening on port `390`. Directory Manager DN: `cn=Directory Manager`, password `password`. Root Suffix: `dc=example,dc=com`.
+*   Both RHDS instances are already installed, initialized, and running.
+*   Basic understanding of LDAP operations and RHDS command-line tools (`dscreate`, `dsconf`, `dsctl`, `ldapadd`, `ldapsearch`).
+
+NOTE: If your RHDS instances are on separate hosts, replace `localhost:390` with `hostname_of_instance2:389` and `localhost:389` with `hostname_of_instance1:389` in the commands as appropriate.
+
+==== Lab Environment Setup
+
+For this lab, we'll assume `instance1` is running on default port `389` and `instance2` on port `390`.
+You would typically create these instances as follows:
+
+[source,bash]
+----
+# Create instance1 on port 389
+sudo dscreate create --owner=root --group=root --port 389 --suffix "dc=example,dc=com" --dirman-dn "cn=Directory Manager" --dirman-pwd "password" --instancename instance1 --output-file /tmp/instance1_info.txt
+
+# Create instance2 on port 390
+sudo dscreate create --owner=root --group=root --port 390 --suffix "dc=example,dc=com" --dirman-dn "cn=Directory Manager" --dirman-pwd "password" --instancename instance2 --output-file /tmp/instance2_info.txt
+----
+
+Make sure both instances are started:
+
+[source,bash]
+----
+sudo dsctl instance1 start
+sudo dsctl instance2 start
+----
+
+==== Lab Activities: Implementing Multi-Supplier Replication
+
+Follow these steps to configure and verify multi-supplier replication.
+
+===== Step 1: Verify Initial Directory Contents (Optional)
+
+First, let's ensure both directories are empty or have minimal data, and then we'll add some data to verify replication later.
+
+*   Check `instance1`:
+    [source,bash]
+    ----
+    ldapsearch -H ldap://localhost:389 -D "cn=Directory Manager" -w password -b "dc=example,dc=com" -s sub "(objectClass=*)" dn
+    ----
+*   Check `instance2`:
+    [source,bash]
+    ----
+    ldapsearch -H ldap://localhost:390 -D "cn=Directory Manager" -w password -b "dc=example,dc=com" -s sub "(objectClass=*)" dn
+    ----
+    You should see only the base `dc=example,dc=com` entry and its immediate children.
+
+===== Step 2: Enable Replication for the Suffix on Both Instances
+
+You need to enable replication for the specific suffix (`dc=example,dc=com`) on both RHDS instances. This enables the replication mechanism for the designated data tree.
+
+*   On `instance1` (port 389):
+    [source,bash]
+    ----
+    sudo dsconf -D "cn=Directory Manager" -w password -p 389 replication enable --suffix "dc=example,dc=com"
+    ----
+*   On `instance2` (port 390):
+    [source,bash]
+    ----
+    sudo dsconf -D "cn=Directory Manager" -w password -p 390 replication enable --suffix "dc=example,dc=com"
+    ----
+
+===== Step 3: Create a Replication Manager User
+
+Replication uses a dedicated user account to bind and authenticate between the supplier and consumer servers. This account requires specific Access Control Instructions (ACIs) to perform replication operations. We'll create a simple replication manager entry on *both* servers.
+
+*   Create an LDIF file named `repman.ldif` with the following content:
+    [source,ldif]
+    ----
+    dn: cn=replication manager,dc=example,dc=com
+    objectClass: person
+    objectClass: organizationalPerson
+    objectClass: inetOrgPerson
+    cn: replication manager
+    sn: manager
+    userPassword: replpassword
+    description: User for replication purposes
+    ----
+
+*   Add the replication manager on `instance1`:
+    [source,bash]
+    ----
+    ldapadd -H ldap://localhost:389 -D "cn=Directory Manager" -w password -f repman.ldif
+    ----
+    Expected output:
+    [source,text]
+    ----
+    adding new entry "cn=replication manager,dc=example,dc=com"
+    ----
+
+*   Add the replication manager on `instance2`:
+    [source,bash]
+    ----
+    ldapadd -H ldap://localhost:390 -D "cn=Directory Manager" -w password -f repman.ldif
+    ----
+    Expected output:
+    [source,text]
+    ----
+    adding new entry "cn=replication manager,dc=example,dc=com"
+    ----
+
+===== Step 4: Configure ACIs for the Replication Manager User
+
+The `cn=replication manager` user needs specific permissions to perform replication tasks. These ACIs allow the replication manager to write to the replication agreement entries and manage replication attributes. Add these ACIs on *both* instances.
+
+*   On `instance1` (port 389):
+    [source,bash]
+    ----
+    sudo dsconf -D "cn=Directory Manager" -w password -p 389 acl set "cn=replication manager,dc=example,dc=com" "allow (all) user dn=\"ldap://localhost:389/cn=replication manager,dc=example,dc=com\"" --suffix "dc=example,dc=com"
+    sudo dsconf -D "cn=Directory Manager" -w password -p 389 acl set "cn=replication manager,dc=example,dc=com" "allow (all) user dn=\"ldap://localhost:389/cn=replication manager,dc=example,dc=com\"" --group "cn=replication manager,dc=example,dc=com" --suffix "cn=config"
+    ----
+    NOTE: The second `acl set` command is critical for allowing the replication manager to modify configuration entries related to replication agreements.
+
+*   On `instance2` (port 390):
+    [source,bash]
+    ----
+    sudo dsconf -D "cn=Directory Manager" -w password -p 390 acl set "cn=replication manager,dc=example,dc=com" "allow (all) user dn=\"ldap://localhost:390/cn=replication manager,dc=example,dc=com\"" --suffix "dc=example,dc=com"
+    sudo dsconf -D "cn=Directory Manager" -w password -p 390 acl set "cn=replication manager,dc=example,dc=com" "allow (all) user dn=\"ldap://localhost:390/cn=replication manager,dc=example,dc=com\"" --group "cn=replication manager,dc=example,dc=com" --suffix "cn=config"
+    ----
+
+===== Step 5: Create Replication Agreements (Multi-Supplier)
+
+Now we will create the replication agreements. For multi-supplier replication, each server acts as both a supplier and a consumer to the other. This means you need two agreements: one from `instance1` to `instance2` and one from `instance2` to `instance1`.
+
+*   **Create agreement from `instance1` to `instance2`:**
+    This command, executed on `instance1`, tells `instance1` to send changes to `instance2`.
+    [source,bash]
+    ----
+    sudo dsconf -D "cn=Directory Manager" -w password -p 389 replication agreement create \
+      --suffix "dc=example,dc=com" \
+      --server "localhost:390" \
+      --binddn "cn=replication manager,dc=example,dc=com" \
+      --bindpw "replpassword" \
+      --agreement-name "repl_to_instance2" \
+      --transport "LDAP" \
+      --replication-type "two-way"
+    ----
+    NOTE: The `--replication-type "two-way"` automatically creates a corresponding agreement on the target server (`instance2`) from `instance2` back to `instance1`, simplifying the setup for multi-supplier replication. It essentially handles the creation of the agreement we would have manually created next.
+
+    You will be prompted to accept adding `localhost:390` as a trusted replication partner. Type `yes` and press Enter.
+    [source,text]
+    ----
+    Are you sure you want to add 'localhost:390' as a trusted replication partner? [yes/no] yes
+    ----
+
+    If you check `instance2` at this point, you should already see an agreement created *from* `instance2` *to* `instance1` because of the `two-way` flag.
+
+*   **Verify agreements on `instance1`:**
+    [source,bash]
+    ----
+    sudo dsconf -D "cn=Directory Manager" -w password -p 389 replication agreement list --suffix "dc=example,dc=com"
+    ----
+    You should see an agreement named `repl_to_instance2`.
+
+*   **Verify agreements on `instance2`:**
+    [source,bash]
+    ----
+    sudo dsconf -D "cn=Directory Manager" -w password -p 390 replication agreement list --suffix "dc=example,dc=com"
+    ----
+    You should see an agreement automatically created, likely named `instance1-repl_to_instance2` or similar, pointing back to `instance1`.
+
+===== Step 6: Initialize Replication (Optional, for pre-existing data)
+
+If one of your servers contains existing data that needs to be synchronized to the other *before* active replication begins, you would use the `dsconf replication initialize` command. For this lab, since we're starting with relatively empty directories and immediately testing, we will skip explicit initialization and rely on immediate propagation.
+
+If you had existing data on `instance1` that you wanted to push to `instance2` to establish a baseline, you would run:
+[source,bash]
+----
+# This is an example, not strictly necessary for this lab if both are empty
+sudo dsconf -D "cn=Directory Manager" -w password -p 389 replication initialize --suffix "dc=example,dc=com" --agreement-name "repl_to_instance2"
+----
+
+===== Step 7: Verify Replication Status
+
+Check the status of the replication agreements on both servers. This helps confirm that the agreements are active and ready.
+
+*   Check status on `instance1`:
+    [source,bash]
+    ----
+    sudo dsctl -D "cn=Directory Manager" -w password -p 389 replication status
+    ----
+    Look for `Status: Online` and `Replica status: ok` for the agreement.
+
+*   Check status on `instance2`:
+    [source,bash]
+    ----
+    sudo dsctl -D "cn=Directory Manager" -w password -p 390 replication status
+    ----
+    Again, look for `Status: Online` and `Replica status: ok`.
+
+If you see errors, ensure all previous steps (especially ACIs and replication manager user) were completed correctly.
+
+===== Step 8: Test Multi-Supplier Replication
+
+Now, let's add an entry to one server and verify it appears on the other, then repeat the process in reverse.
+
+*   **Add an entry on `instance1`:**
+    Create an LDIF file named `user1.ldif`:
+    [source,ldif]
+    ----
+    dn: uid=user1,ou=users,dc=example,dc=com
+    objectClass: top
+    objectClass: person
+    objectClass: organizationalPerson
+    objectClass: inetOrgPerson
+    uid: user1
+    cn: User One
+    sn: One
+    userPassword: password1
+    ----
+    Add it to `instance1`:
+    [source,bash]
+    ----
+    ldapadd -H ldap://localhost:389 -D "cn=Directory Manager" -w password -f user1.ldif
+    ----
+    You might need to create the `ou=users` entry first if it doesn't exist:
+    [source,ldif]
+    ----
+    dn: ou=users,dc=example,dc=com
+    objectClass: organizationalUnit
+    ou: users
+    ----
+    [source,bash]
+    ----
+    ldapadd -H ldap://localhost:389 -D "cn=Directory Manager" -w password -f ou_users.ldif
+    ----
+
+*   **Verify `user1` on `instance2`:**
+    Wait a few seconds for replication to occur. Then search `instance2`:
+    [source,bash]
+    ----
+    ldapsearch -H ldap://localhost:390 -D "cn=Directory Manager" -w password -b "dc=example,dc=com" "(uid=user1)" uid cn
+    ----
+    Expected output (or similar):
+    [source,text]
+    ----
+    # ...
+    dn: uid=user1,ou=users,dc=example,dc=com
+    uid: user1
+    cn: User One
+    ----
+    If the entry appears, replication from `instance1` to `instance2` is working.
+
+*   **Add an entry on `instance2`:**
+    Create an LDIF file named `user2.ldif`:
+    [source,ldif]
+    ----
+    dn: uid=user2,ou=users,dc=example,dc=com
+    objectClass: top
+    objectClass: person
+    objectClass: organizationalPerson
+    objectClass: inetOrgPerson
+    uid: user2
+    cn: User Two
+    sn: Two
+    userPassword: password2
+    ----
+    Add it to `instance2`:
+    [source,bash]
+    ----
+    ldapadd -H ldap://localhost:390 -D "cn=Directory Manager" -w password -f user2.ldif
+    ----
+    NOTE: If `ou=users` didn't exist before adding `user1` on `instance1`, it would have replicated to `instance2`. If it wasn't there for some reason, create it on `instance2` first with `ou_users.ldif`.
+
+*   **Verify `user2` on `instance1`:**
+    Wait a few seconds. Then search `instance1`:
+    [source,bash]
+    ----
+    ldapsearch -H ldap://localhost:389 -D "cn=Directory Manager" -w password -b "dc=example,dc=com" "(uid=user2)" uid cn
+    ----
+    Expected output (or similar):
+    [source,text]
+    ----
+    # ...
+    dn: uid=user2,ou=users,dc=example,dc=com
+    uid: user2
+    cn: User Two
+    ----
+    If the entry appears, replication from `instance2` to `instance1` is working.
+
+Congratulations! You have successfully configured and verified multi-supplier replication between two Red Hat Directory Server instances.
+
+==== Troubleshooting Tips
+
+*   **Check logs**: Always inspect the `/var/log/dirsrv/slapd-<instance_name>/errors` log file on both servers for any replication-related errors.
+*   **Verify network connectivity**: Ensure that the servers can communicate with each other on the LDAP/LDAPS ports. Use `ping`, `telnet`, or `nc`.
+*   **Permissions**: Double-check the ACIs for the replication manager user. Incorrect ACIs are a common source of replication failures.
+*   **Replication status**: Regularly use `dsctl replication status` to monitor the health of replication agreements. Look for pending changes or errors.
+*   **Time synchronization**: Ensure that all directory servers participating in replication have their clocks synchronized (e.g., using NTP). Time differences can cause replication issues.
+*   **Restart services**: After significant configuration changes, a restart of the RHDS instance (`sudo dsctl <instance_name> restart`) can sometimes help.
+
+==== Conclusion
+
+Multi-supplier replication is a cornerstone of robust directory service architectures. By enabling multiple RHDS instances to accept writes and automatically synchronize data, you achieve high availability and disaster recovery capabilities. This lab provided a practical walkthrough of setting up such a topology, highlighting the key configuration steps and verification methods. Understanding and implementing multi-supplier replication is essential for managing critical identity infrastructure in enterprise environments.

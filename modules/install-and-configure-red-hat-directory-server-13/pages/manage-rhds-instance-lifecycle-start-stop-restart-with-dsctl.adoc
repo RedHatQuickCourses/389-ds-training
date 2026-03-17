@@ -1,0 +1,201 @@
+#  Manage RHDS instance lifecycle (start, stop, restart) with `dsctl`.
+
+= Manage RHDS instance lifecycle (start, stop, restart) with `dsctl`
+
+Red Hat Directory Server (RHDS) instances, like any critical service, require robust management of their operational lifecycle. This includes starting them up to make them available, stopping them for maintenance or graceful shutdown, and restarting them to apply configuration changes or recover from issues. The `dsctl` utility is the primary command-line tool for managing these lifecycle operations for RHDS instances.
+
+== The `dsctl` Utility: Your RHDS Lifecycle Manager
+
+The `dsctl` utility is a powerful administrative tool provided by Red Hat Directory Server. It simplifies the process of controlling RHDS instances by abstracting away the underlying `systemd` commands. While you *could* use `systemctl` directly for `systemd`-managed instances (e.g., `systemctl start ds@instance1`), `dsctl` offers a more Directory Server-specific, user-friendly interface that ensures consistency and often provides more relevant output. It's designed to manage individual RHDS instances identified by their unique instance name.
+
+Understanding these commands is crucial for day-to-day administration, applying configuration changes, troubleshooting, and performing maintenance tasks on your directory server deployments.
+
+=== Prerequisites for Using `dsctl`
+
+Before you can manage an RHDS instance with `dsctl`, the instance must have already been created and initialized using the `dscreate` utility. `dscreate` sets up the necessary files, directories, and `systemd` unit files (`ds@_instance_name_.service`) that `dsctl` interacts with.
+
+=== Key `dsctl` Lifecycle Commands
+
+The primary lifecycle commands you'll use are `start`, `stop`, `restart`, and `status`. Each command operates on a specified RHDS instance.
+
+.Common `dsctl` Syntax
+[source,bash]
+----
+dsctl <command> <instance_name>
+----
+
+Where:
+
+*   `<command>` is one of `start`, `stop`, `restart`, or `status`.
+*   `<instance_name>` is the unique name given to your RHDS instance during its creation (e.g., `instance1`).
+
+== Detailed Technical Explanation of Lifecycle Operations
+
+=== Starting an RHDS Instance
+
+When you start an RHDS instance, `dsctl` initiates the `systemd` service unit associated with that instance. This process involves:
+
+*   **Loading Configuration**: The server reads its configuration files (e.g., `dse.ldif`) to determine its operational parameters, enabled plugins, database settings, and more.
+*   **Database Initialization/Opening**: It opens and potentially performs recovery operations on its underlying databases (e.g., LDBM files).
+*   **Network Listening**: The server binds to the configured LDAP (default port 389) and LDAPS (default port 636) ports, making it available to receive client connections.
+*   **Plugin Loading**: Any configured plugins (e.g., for password policy, replication, auditing) are loaded and initialized.
+
+A successfully started instance will be actively listening for LDAP requests on its configured ports.
+
+=== Stopping an RHDS Instance
+
+Stopping an RHDS instance is a graceful shutdown process. `dsctl` signals the `systemd` service to terminate the directory server process. This involves:
+
+*   **Rejecting New Connections**: The server stops accepting new client connections.
+*   **Processing Existing Connections**: It attempts to gracefully close existing client connections.
+*   **Flushing Data to Disk**: Any cached data or pending writes are flushed to the database files to ensure data integrity.
+*   **Releasing Resources**: The server releases network ports, memory, and file handles.
+
+A graceful stop is crucial to prevent data corruption and ensure a clean restart.
+
+=== Restarting an RHDS Instance
+
+Restarting an RHDS instance is a convenience operation that combines a graceful `stop` followed by a `start`. This is commonly used after applying configuration changes that require the server to reload its settings, such as modifying schema definitions, enabling/disabling plugins, or changing network parameters.
+
+The restart process ensures that the server shuts down cleanly, then reinitializes with the latest configuration.
+
+=== Checking RHDS Instance Status
+
+Checking the status of an RHDS instance is vital for verifying its operational state. This command provides information on whether the instance is running, for how long, its process ID (PID), and recent log entries. It helps confirm if a start, stop, or restart operation was successful and can be the first step in troubleshooting.
+
+== Hands-on Lab: Manage Directory Server Instance Lifecycle
+
+In this lab, you will practice starting, stopping, restarting, and checking the status of an RHDS instance using the `dsctl` utility. We will assume you have an RHDS instance named `instance1` already created and possibly running.
+
+.Ensure you are logged in as `root` or a user with `sudo` privileges.
+
+=== Activity 1: Verify the Current Status of an RHDS Instance
+
+Before making any changes, it's good practice to check the current state of your directory server instance.
+
+.Command
+[source,bash]
+----
+dsctl status instance1
+----
+
+.Expected Output (Example - if running)
+[source,text]
+----
+Redirecting to /bin/systemctl status ds@instance1.service
+● ds@instance1.service - 389 Directory Server instance instance1
+     Loaded: loaded (/etc/systemd/system/ds@.service; enabled; vendor preset: disabled)
+     Active: active (running) since Tue 2023-10-24 10:30:15 UTC; 1min 23s ago
+       Docs: man:dsctl(8)
+   Main PID: 1234 (ns-slapd)
+      Tasks: 47 (limit: 11181)
+     Memory: 45.3M
+        CPU: 420ms
+     CGroup: /system.slice/system-ds@instance1.service
+             └─1234 /usr/sbin/ns-slapd -D /etc/dirsrv/slapd-instance1 -i /var/run/dirsrv/slapd-instance1.pid
+
+Oct 24 10:30:15 server.example.com systemd[1]: Started 389 Directory Server instance instance1.
+----
+
+.Expected Output (Example - if stopped)
+[source,text]
+----
+Redirecting to /bin/systemctl status ds@instance1.service
+● ds@instance1.service - 389 Directory Server instance instance1
+     Loaded: loaded (/etc/systemd/system/ds@.service; enabled; vendor preset: disabled)
+     Active: inactive (dead) since Tue 2023-10-24 10:32:00 UTC; 5s ago
+       Docs: man:dsctl(8)
+    Process: 1234 ExecStart=/usr/sbin/ns-slapd -D /etc/dirsrv/slapd-instance1 -i /var/run/dirsrv/slapd-instance1.pid (code=exited, status=0/SUCCESS)
+   Main PID: 1234 (code=exited, status=0/SUCCESS)
+        CPU: 12ms
+
+Oct 24 10:30:15 server.example.com systemd[1]: Started 389 Directory Server instance instance1.
+Oct 24 10:32:00 server.example.com systemd[1]: Stopping 389 Directory Server instance instance1.
+Oct 24 10:32:00 server.example.com systemd[1]: ds@instance1.service: Deactivated successfully.
+Oct 24 10:32:00 server.example.com systemd[1]: Stopped 389 Directory Server instance instance1.
+----
+You can clearly see `Active: active (running)` or `Active: inactive (dead)` to understand its state.
+
+=== Activity 2: Stop the RHDS Instance
+
+Now, let's stop the running RHDS instance.
+
+.Command
+[source,bash]
+----
+dsctl stop instance1
+----
+
+.Expected Output
+[source,text]
+----
+Stopping instance1...
+Stopped.
+----
+
+.Verification
+Verify the instance has stopped by checking its status again.
+[source,bash]
+----
+dsctl status instance1
+----
+The output should now show `Active: inactive (dead)`.
+
+=== Activity 3: Start the RHDS Instance
+
+Next, we'll start the RHDS instance that you just stopped.
+
+.Command
+[source,bash]
+----
+dsctl start instance1
+----
+
+.Expected Output
+[source,text]
+----
+Starting instance1...
+Started.
+----
+
+.Verification
+Verify the instance has started successfully.
+[source,bash]
+----
+dsctl status instance1
+----
+The output should now show `Active: active (running)`.
+
+=== Activity 4: Restart the RHDS Instance
+
+Finally, we'll practice restarting the instance. This operation combines a stop and a start, useful for applying configuration changes.
+
+.Command
+[source,bash]
+----
+dsctl restart instance1
+----
+
+.Expected Output
+[source,text]
+----
+Restarting instance1...
+Restarted.
+----
+
+.Verification
+Verify the instance is running after the restart.
+[source,bash]
+----
+dsctl status instance1
+----
+The output should show `Active: active (running)`. Observe the `since` timestamp; it should reflect the time of the restart, indicating a fresh start.
+
+[IMPORTANT]
+.Troubleshooting `dsctl` Failures
+If an instance fails to start or restart, the `dsctl status <instance_name>` output will often provide hints or recent log entries. For more detailed troubleshooting, you should examine the RHDS instance's error logs, typically located under `/var/log/dirsrv/slapd-<instance_name>/errors`. You can also use `journalctl -u ds@<instance_name>.service` for more extensive systemd logs. Common issues include incorrect permissions, corrupted database files, or invalid configuration parameters.
+
+.Permissions
+`dsctl` commands typically require `root` privileges or specific `sudo` permissions because they interact with system services and potentially sensitive files owned by the `dirsrv` user.
+
+This completes your hands-on experience with managing the RHDS instance lifecycle using `dsctl`.

@@ -1,0 +1,7 @@
+* xref:install-and-configure-red-hat-directory-server-13.adoc[]
+** xref:identify-system-requirements-and-prerequisites-for-rhds-13-on-rhel-9.adoc[]
+** xref:install-necessary-rhds-13-packages.adoc[]
+** xref:create-and-initialize-a-new-rhds-instance-using-dscreate.adoc[]
+** xref:perform-basic-server-configuration-using-dsconf-and-dsidm.adoc[]
+** xref:manage-rhds-instance-lifecycle-start-stop-restart-with-dsctl.adoc[]
+** xref:hands-on-lab-deploy-and-perform-initial-configuration-of-an-rhds-instance.adoc[]

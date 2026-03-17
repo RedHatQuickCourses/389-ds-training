@@ -1,0 +1,252 @@
+#  Identify system requirements and prerequisites for RHDS 13 on RHEL 9.
+
+= Identify System Requirements and Prerequisites for RHDS 13 on RHEL 9
+
+Understanding the foundational system requirements and prerequisites is a critical first step before deploying Red Hat Directory Server 13 (RHDS 13) on Red Hat Enterprise Linux 9 (RHEL 9). A properly prepared environment ensures a smooth installation, optimal performance, and stability of your directory service. This section will detail the necessary hardware, software, and network configurations your system must meet.
+
+== Why Prerequisites Matter
+
+Installing RHDS without meeting its fundamental requirements can lead to:
+
+*   Installation failures or errors.
+*   Poor performance, slow response times, and increased resource consumption.
+*   Security vulnerabilities if system configurations are not hardened.
+*   Operational instability and frequent service interruptions.
+*   Difficulty in troubleshooting problems that arise from an improperly configured environment.
+
+By thoroughly addressing these prerequisites, you lay a solid groundwork for a robust and reliable directory server instance.
+
+== Hardware Requirements
+
+RHDS 13 is designed to be efficient, but its resource consumption can vary significantly based on the size of your directory, the number of client requests, and the complexity of operations. The following are general guidelines:
+
+=== CPU
+*   *Minimum:* 2 vCPUs/cores. Sufficient for basic installations and light loads.
+*   *Recommended:* 4 vCPUs/cores or more. For production environments, higher core counts provide better parallelism for handling multiple client requests and complex operations.
+*   *Insight:* Directory Server operations are often CPU-bound, especially during searches, authentication, and replication. Modern CPUs with higher clock speeds and multiple cores are highly beneficial.
+
+=== RAM (Memory)
+*   *Minimum:* 4 GB. This allows the server to run basic services.
+*   *Recommended:* 8 GB to 16 GB or more.
+    *   RHDS heavily utilizes memory for caching directory entries, indexes, and database buffers. More RAM means more data can be held in memory, reducing disk I/O and significantly improving search performance.
+    *   For large directories (millions of entries) or high-load environments, allocating 32 GB or more is common.
+*   *Insight:* A general rule of thumb is to allocate enough RAM to hold the most frequently accessed portions of your directory database and its indexes in memory.
+
+=== Disk Space
+*   *Minimum:* 20 GB free space. This accounts for:
+    *   RHEL 9 operating system installation.
+    *   RHDS 13 package installation.
+    *   Initial directory database (`db`) files.
+    *   Log files (`access`, `errors`, `audit`).
+*   *Recommended:* 50 GB to 100 GB or more.
+    *   The directory database can grow significantly over time.
+    *   Log files can consume substantial space, especially with detailed logging enabled.
+    *   Ensure separate partitions for the operating system and directory data/logs for better performance, manageability, and disaster recovery.
+*   *Filesystem:* Use `XFS` or `ext4`. `XFS` is generally recommended for performance with large files and directories, which is common for directory server databases.
+*   *Insight:* Disk I/O performance is critical for write operations (add, modify, delete) and for reading data not found in memory caches. Using fast storage (e.g., SSDs, NVMe) is highly recommended for production deployments.
+
+== Operating System Requirements
+
+RHDS 13 is specifically designed and tested to run on Red Hat Enterprise Linux.
+
+*   *Supported OS:* Red Hat Enterprise Linux 9 (RHEL 9) in its various minor releases (e.g., RHEL 9.0, 9.1, 9.2, etc.).
+*   *Architecture:* x86_64.
+*   *Installation:* A minimal or standard RHEL 9 installation is usually sufficient. Avoid installing unnecessary services that might conflict or consume resources.
+*   *Insight:* Always ensure your RHEL system is fully updated with the latest security patches and bug fixes. You will need an active Red Hat subscription to access necessary repositories.
+
+== Network Configuration
+
+Proper network configuration is paramount for a directory server that needs to be accessible by clients and potentially other directory servers for replication.
+
+*   *Static IP Address:* The RHDS server should have a static IP address. Dynamic IP addresses can cause issues with DNS resolution, replication, and client connectivity.
+*   *Fully Qualified Domain Name (FQDN):* The server must have a resolvable FQDN.
+    *   Configure the `/etc/hostname` file correctly.
+    *   Ensure forward and reverse DNS records (A and PTR records) exist and are accurate for the server's FQDN and IP address.
+*   *Firewall Configuration:* The RHEL firewall (`firewalld`) must be configured to allow incoming connections on the necessary ports:
+    *   *LDAP:* Port 389 (TCP)
+    *   *LDAPS (LDAP over TLS):* Port 636 (TCP)
+    *   *Administration Port:* Port 4432 (TCP) by default, used by `dsconf` and `dsidm` for remote administration. This port can be customized.
+    *   *Replication (Optional):* If replication is planned, ensure the LDAP/LDAPS ports are open between replication partners.
+*   *Insight:* Verify DNS resolution from the RHDS server to other network resources and from clients to the RHDS server before installation.
+
+== Software Prerequisites and Dependencies
+
+Several software components and system settings are required or recommended.
+
+*   *Red Hat Subscription:* An active Red Hat Enterprise Linux subscription is mandatory to access the official Red Hat repositories, which contain the RHDS 13 packages and its dependencies.
+*   *Required Packages:* The `389-ds` packages are the primary components for RHDS. Other dependencies will be automatically resolved by `dnf`.
+*   *Time Synchronization:* Configure Network Time Protocol (NTP) or Chrony to synchronize the server's time with a reliable source. Accurate time synchronization is crucial for:
+    *   Correct logging of events.
+    *   Proper functioning of security features like Kerberos (if integrated).
+    *   Ensuring correct replication timestamps across directory servers.
+*   *Open Files Limit:* Increase the maximum number of open files (file descriptors) for the `dirsrv` user. RHDS can handle many concurrent connections and file operations, especially with large databases or high client loads.
+    *   Recommended: At least 8192, and often 65536 or more, depending on the expected load.
+    *   This is typically configured in `/etc/security/limits.conf`.
+*   *SELinux:* Red Hat recommends running RHDS with SELinux in enforcing mode. Ensure the default SELinux policies are loaded, and any custom policies are compatible. RHDS packages typically install necessary SELinux modules.
+*   *Insight:* Always use `dnf install` to ensure all dependencies are met correctly.
+
+== User and Permissions
+
+*   *Root Access:* Installation of RHDS packages and initial instance creation with `dscreate` typically requires `root` privileges.
+*   *Dedicated `dirsrv` User:* RHDS services run as a non-privileged user, typically `dirsrv`. This user is automatically created during package installation and assigned appropriate permissions to access directory data and log files.
+*   *Insight:* Adhering to the principle of least privilege, RHDS does not run as `root` for its day-to-day operations, enhancing security.
+
+== Hands-on Lab: Verify System Prerequisites
+
+Before proceeding with the RHDS 13 installation, it's essential to verify that your RHEL 9 system meets all the necessary prerequisites.
+
+=== Objective
+Verify the system requirements and prerequisites for installing Red Hat Directory Server 13 on a RHEL 9 host.
+
+=== Environment Setup
+*   A running Red Hat Enterprise Linux 9 system.
+*   Root access or `sudo` privileges.
+*   An active Red Hat subscription is recommended for full verification.
+
+=== Steps
+
+1.  *Verify Operating System Version and Architecture*
+    Check that your system is running RHEL 9 and is on the x86_64 architecture.
+    [source,bash]
+    ----
+    cat /etc/redhat-release
+    uname -m
+    ----
+    Expected Output (example):
+    ```
+    Red Hat Enterprise Linux release 9.2 (Plow)
+    x86_64
+    ```
+
+2.  *Check CPU Resources*
+    Inspect the number of CPU cores available.
+    [source,bash]
+    ----
+    nproc --all
+    ----
+    Expected Output (example - should be 2 or more):
+    ```
+    4
+    ```
+
+3.  *Check Memory Resources*
+    Verify the total amount of RAM on the system.
+    [source,bash]
+    ----
+    free -h
+    ----
+    Expected Output (example - `Mem:` row should show 4G or more):
+    ```
+                  total        used        free      shared  buff/cache   available
+    Mem:           15Gi       673Mi        14Gi        16Mi       410Mi        14Gi
+    Swap:         7.8Gi          0B       7.8Gi
+    ```
+
+4.  *Check Available Disk Space*
+    Confirm sufficient free disk space on the root filesystem and any other intended data partitions.
+    [source,bash]
+    ----
+    df -h /
+    ----
+    Expected Output (example - `Avail` column should show 20G or more):
+    ```
+    Filesystem      Size  Used Avail Use% Mounted on
+    /dev/vda2        50G  5.0G   45G  10% /
+    ```
+
+5.  *Verify Network Configuration*
+
+    a.  *Check IP Address and FQDN:*
+        Ensure the system has a static IP and its FQDN is correctly configured.
+        [source,bash]
+        ----
+        hostname -f
+        ip a show eth0 # Replace eth0 with your primary network interface
+        ----
+        Expected Output (example):
+        ```
+        rhds-server.example.com
+        ...
+        inet 192.168.1.10/24 brd 192.168.1.255 scope global dynamic eth0
+        ...
+        ```
+
+    b.  *Verify DNS Resolution:*
+        Test forward and reverse DNS resolution for the server's FQDN.
+        [source,bash]
+        ----
+        dig +short $(hostname -f)
+        dig +short -x $(hostname -i)
+        ----
+        Expected Output (example - should resolve to the server's IP and FQDN respectively):
+        ```
+        192.168.1.10
+        rhds-server.example.com.
+        ```
+
+    c.  *Check Firewall Status:*
+        Ensure `firewalld` is running and list active zones.
+        [source,bash]
+        ----
+        sudo systemctl status firewalld
+        sudo firewall-cmd --get-active-zones
+        ----
+        Expected Output (example):
+        ```
+        ● firewalld.service - FirewallD - Dynamic Firewall Manager
+             Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; vendor preset: enabled)
+             Active: active (running) since ...
+        ...
+        public
+          interfaces: eth0
+        ```
+        *(Note: You will configure firewall rules for RHDS ports later in the installation process.)*
+
+6.  *Verify Red Hat Subscription Status*
+    Confirm the system is registered and subscribed to the necessary repositories.
+    [source,bash]
+    ----
+    sudo subscription-manager status
+    sudo subscription-manager repos --list-enabled
+    ----
+    Expected Output (example):
+    ```
+    Overall Status: Current
+    ```
+    Ensure repositories containing `rhel-9-for-x86_64-appstream-rpms` and potentially `rhel-9-for-x86_64-baseos-rpms` are enabled.
+
+7.  *Check Time Synchronization Service Status*
+    Verify that `chronyd` or `ntpd` is active and synchronized. `chronyd` is the default on RHEL 9.
+    [source,bash]
+    ----
+    sudo systemctl status chronyd
+    sudo chronyc tracking
+    ----
+    Expected Output (example):
+    ```
+    ● chronyd.service - Network Time Synchronization
+         Loaded: loaded (/usr/lib/systemd/system/chronyd.service; enabled; vendor preset: enabled)
+         Active: active (running) since ...
+    ...
+    Reference ID    : 192.168.1.1 (timeserver.example.com)
+    Stratum         : 3
+    ...
+    ```
+
+8.  *Check SELinux Status*
+    Confirm SELinux is in enforcing mode.
+    [source,bash]
+    ----
+    sestatus
+    ----
+    Expected Output:
+    ```
+    SELinux status:                 enabled
+    SELinuxfs mount:                /sys/fs/selinux
+    SELinux root directory:         /etc/selinux
+    Loaded policy name:             targeted
+    Current mode:                   enforcing
+    Mode from config file:          enforcing
+    ```
+
+By successfully completing these verification steps, you ensure your RHEL 9 host is adequately prepared for the installation of Red Hat Directory Server 13.

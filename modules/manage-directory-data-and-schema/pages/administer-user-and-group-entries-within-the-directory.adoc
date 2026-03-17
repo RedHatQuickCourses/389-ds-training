@@ -1,0 +1,357 @@
+#  Administer user and group entries within the directory.
+
+= Administer User and Group Entries
+
+This module focuses on the fundamental aspects of managing user and group entries within Red Hat Directory Server (RHDS). Understanding how to administer these core identity elements is crucial for any directory service deployment, enabling proper access control, authentication, and organizational structure. By the end of this module, you will be able to create, modify, and delete user and group entries, and manage group memberships using command-line tools.
+
+== Understanding User and Group Entries in LDAP
+
+In an LDAP directory like Red Hat Directory Server, user and group accounts are represented as distinct entries within the Directory Information Tree (DIT). Each entry is a collection of attributes, uniquely identified by a Distinguished Name (DN), and defined by a set of object classes that dictate which attributes it *must* and *may* contain.
+
+=== User Entries
+
+User entries typically represent individual people or service accounts. The most common object classes used for user entries, especially in environments integrating with Linux/Unix systems, are:
+
+*   `person`: A fundamental object class providing basic attributes like `cn` (common name) and `sn` (surname).
+*   `organizationalPerson`: Extends `person` with attributes relevant to an organizational context, such as `title`, `telephoneNumber`, and `seeAlso`.
+*   `inetOrgPerson`: A widely adopted standard object class for people, providing attributes like `givenName` (first name), `mail` (email address), `uid` (user ID), and more. It inherits from `organizationalPerson`.
+*   `posixAccount`: Essential for Unix-like system integration. This object class adds attributes specific to POSIX accounts, such as `uidNumber` (numeric user ID), `gidNumber` (primary group numeric ID), `homeDirectory`, and `loginShell`.
+
+A user entry's DN typically reflects its position in the DIT, often under an organizational unit for users (e.g., `ou=People`).
+
+[source,text]
+----
+dn: uid=jdoe,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: jdoe
+cn: John Doe
+sn: Doe
+givenName: John
+mail: jdoe@example.com
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: /home/jdoe
+loginShell: /bin/bash
+userPassword: {SSHA}hashedpassword ; Store passwords securely, ideally hashed.
+----
+In the example above:
+*   `dn: uid=jdoe,ou=People,dc=example,dc=com` is the user's unique Distinguished Name.
+*   `objectClass` attributes define the type of entry and its allowed attributes.
+*   `uid`, `cn`, `sn`, `givenName`, `mail` are common attributes from `inetOrgPerson`.
+*   `uidNumber`, `gidNumber`, `homeDirectory`, `loginShell` are from `posixAccount` and crucial for Unix integration.
+*   `userPassword` stores the user's password, typically in a hashed format.
+
+=== Group Entries
+
+Group entries are used to aggregate users, simplifying permission management and access control. Instead of assigning permissions to individual users, you can assign them to a group, and any member of that group inherits those permissions. Common object classes for groups include:
+
+*   `groupOfNames`: A widely used object class for groups. It requires the `cn` (common name) attribute and the `member` attribute, which contains the full DNs of its members.
+*   `groupOfUniqueNames`: Similar to `groupOfNames` but uses `uniqueMember` attributes, which are explicitly stated to be unique DNs. In practice, `groupOfNames` is often preferred for simplicity.
+*   `posixGroup`: Crucial for Unix-like system integration. This object class adds `gidNumber` (numeric group ID) and `memberUid` attributes. `memberUid` stores the `uid` *attribute value* (e.g., `jdoe`) of group members, rather than their full DN. This is often more efficient for looking up group memberships by `uid` in Unix environments.
+
+A group entry's DN often resides under an organizational unit for groups (e.g., `ou=Groups`).
+
+[source,text]
+----
+dn: cn=developers,ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: developers
+member: uid=jdoe,ou=People,dc=example,dc=com
+member: uid=asmith,ou=People,dc=example,dc=com
+description: Development Team
+----
+This `groupOfNames` example includes two members, identified by their full DNs.
+
+[source,text]
+----
+dn: cn=sysadmins,ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: posixGroup
+cn: sysadmins
+gidNumber: 2001
+memberUid: jdoe
+memberUid: pthomas
+description: System Administration Team
+----
+This `posixGroup` example uses `gidNumber` for Unix integration and `memberUid` to list members by their `uid` attribute value.
+
+The choice between `groupOfNames`/`uniqueMember` and `posixGroup` (with `memberUid`) depends on your primary integration needs. For generic LDAP applications, `groupOfNames` is common. For Unix/Linux system authentication and authorization, `posixGroup` is often necessary. It's also possible to combine them by extending a group with additional object classes, though this adds complexity to schema and data management.
+
+== Administering User and Group Entries
+
+We will use the command-line tools `ldapadd`, `ldapmodify`, `ldapdelete`, and `ldapsearch` to perform administrative tasks. These tools interact directly with the RHDS instance using the LDAP protocol.
+
+[NOTE]
+Before proceeding, ensure you have a Red Hat Directory Server instance running (e.g., from a previous lab) and have administrative credentials (e.g., `cn=Directory Manager`). The base DN `dc=example,dc=com` will be used throughout these examples.
+
+=== Hands-on Lab: Managing User Accounts
+
+This lab guides you through adding, modifying, and deleting user entries in RHDS.
+
+==== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance.
+*   The `openldap-clients` package (or equivalent) installed on your client machine.
+*   Administrative bind DN (e.g., `cn=Directory Manager`) and its password.
+*   The base DN for your directory (e.g., `dc=example,dc=com`).
+
+==== Step 1: Create an Organizational Unit for Users
+
+It's a best practice to organize user entries within a dedicated Organizational Unit (OU), typically `ou=People`. This improves directory structure and search efficiency.
+
+.Create a file named `people.ldif` with the following content:
+[source,ldif]
+----
+dn: ou=People,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: People
+description: All user accounts
+----
+
+.Add the OU entry to the directory using `ldapadd`:
+[source,bash,subs="attributes+"]
+----
+ldapadd -x -D "cn=Directory Manager" -W -f people.ldif -H ldap://localhost:389
+----
+When prompted, enter the Directory Manager password.
+You should see output similar to: `adding new entry "ou=People,dc=example,dc=com"`
+
+==== Step 2: Add a New User Entry
+
+Now, let's add a new user named Jane Doe. This entry will include object classes for both `inetOrgPerson` and `posixAccount` for broad compatibility.
+
+.Create a file named `jane_doe.ldif` with the following content:
+[source,ldif]
+----
+dn: uid=jdoe,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: jdoe
+cn: Jane Doe
+sn: Doe
+givenName: Jane
+mail: jdoe@example.com
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: /home/jdoe
+loginShell: /bin/bash
+userPassword: password
+----
+[IMPORTANT]
+For `uidNumber` and `gidNumber`, ensure these are unique within your directory for POSIX compatibility. For initial lab purposes, `1001` is fine.
+
+.Add the user entry to the directory using `ldapadd`:
+[source,bash,subs="attributes+"]
+----
+ldapadd -x -D "cn=Directory Manager" -W -f jane_doe.ldif -H ldap://localhost:389
+----
+Verify the addition: `adding new entry "uid=jdoe,ou=People,dc=example,dc=com"`
+
+==== Step 3: Verify the User Entry
+
+Use `ldapsearch` to retrieve and inspect the newly added user entry.
+
+[source,bash,subs="attributes+"]
+----
+ldapsearch -x -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "uid=jdoe"
+----
+You should see the full entry for `uid=jdoe`, including all attributes you specified.
+
+==== Step 4: Modify a User Entry
+
+User information often changes. Let's update Jane Doe's email address and add a description.
+
+.Create a file named `modify_jdoe.ldif` with the following content:
+[source,ldif]
+----
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: modify
+replace: mail
+mail: jane.doe.new@example.com
+-
+add: description
+description: HR Department Staff
+----
+The `-` between `replace` and `add` actions is a separator for multiple modifications within the same LDIF record.
+
+.Apply the modifications using `ldapmodify`:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -x -D "cn=Directory Manager" -W -f modify_jdoe.ldif -H ldap://localhost:389
+----
+Verify the modification by searching again for `uid=jdoe`. You should see `mail: jane.doe.new@example.com` and `description: HR Department Staff`.
+
+==== Step 5: Modify User Password
+
+Changing a user's password is a common administrative task.
+
+.Create a file named `change_password_jdoe.ldif`:
+[source,ldif]
+----
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: modify
+replace: userPassword
+userPassword: newsecurepassword!
+----
+[WARNING]
+For production environments, *never* send passwords in plaintext or store them in LDIF files. Use a strong password and consider using `ldappasswd` for secure password changes, as it can hash the password locally before sending it to the server. When using `ldapmodify` with plain text `userPassword`, ensure you are using a secure connection (LDAPS or STARTTLS).
+
+.Apply the password change using `ldapmodify`:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -x -D "cn=Directory Manager" -W -f change_password_jdoe.ldif -H ldap://localhost:389
+----
+
+==== Step 6: Delete a User Entry
+
+If a user leaves the organization or an account is no longer needed, their entry should be removed from the directory.
+
+[source,bash,subs="attributes+"]
+----
+ldapdelete -x -D "cn=Directory Manager" -W "uid=jdoe,ou=People,dc=example,dc=com" -H ldap://localhost:389
+----
+Verify the deletion by searching for `uid=jdoe`. It should return no entries.
+
+=== Hands-on Lab: Managing Group Accounts
+
+This lab guides you through adding, modifying, and deleting group entries, and managing their members.
+
+==== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance.
+*   The `openldap-clients` package installed.
+*   Administrative bind DN and password.
+*   The base DN for your directory.
+*   *At least two user entries* (e.g., `uid=jdoe`, `uid=asmith`) in `ou=People,dc=example,dc=com`. If you deleted `jdoe` in the previous lab, recreate it or create another user (e.g., `asmith`). For this lab, let's ensure `uid=jdoe,ou=People,dc=example,dc=com` and `uid=asmith,ou=People,dc=example,dc=com` exist.
+
+==== Step 1: Create an Organizational Unit for Groups
+
+To keep the directory organized, create an OU specifically for group entries, typically `ou=Groups`.
+
+.Create a file named `groups.ldif`:
+[source,ldif]
+----
+dn: ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: Groups
+description: All organizational groups
+----
+
+.Add the OU entry to the directory:
+[source,bash,subs="attributes+"]
+----
+ldapadd -x -D "cn=Directory Manager" -W -f groups.ldif -H ldap://localhost:389
+----
+
+==== Step 2: Add a New Group (groupOfNames)
+
+Let's create a 'developers' group using the `groupOfNames` object class, which stores members by their full DN.
+
+.Create a file named `developers_group.ldif`:
+[source,ldif]
+----
+dn: cn=developers,ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: developers
+member: uid=jdoe,ou=People,dc=example,dc=com
+member: uid=asmith,ou=People,dc=example,dc=com
+description: Development Team
+----
+[NOTE]
+Ensure that the `member` DNs specified here point to existing user entries in your directory.
+
+.Add the group entry to the directory:
+[source,bash,subs="attributes+"]
+----
+ldapadd -x -D "cn=Directory Manager" -W -f developers_group.ldif -H ldap://localhost:389
+----
+Verify the addition using `ldapsearch`.
+
+==== Step 3: Add/Remove Members to a Group (`groupOfNames`)
+
+Group memberships frequently change.
+
+.Create a file named `modify_developers.ldif` to add a new member `pthomas` and remove `jdoe`:
+[source,ldif]
+----
+dn: cn=developers,ou=Groups,dc=example,dc=com
+changetype: modify
+add: member
+member: uid=pthomas,ou=People,dc=example,dc=com
+-
+delete: member
+member: uid=jdoe,ou=People,dc=example,dc=com
+----
+[NOTE]
+Remember to create `uid=pthomas,ou=People,dc=example,dc=com` if it doesn't exist, before running this `ldapmodify`.
+
+.Apply the modification:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -x -D "cn=Directory Manager" -W -f modify_developers.ldif -H ldap://localhost:389
+----
+Verify by searching for the group:
+[source,bash,subs="attributes+"]
+----
+ldapsearch -x -D "cn=Directory Manager" -W -b "ou=Groups,dc=example,dc=com" "cn=developers" member
+----
+You should now see `asmith` and `pthomas` as members, but not `jdoe`.
+
+==== Step 4: Add a New Group (posixGroup)
+
+For Unix/Linux system integration, you'll often need `posixGroup` entries. These use `gidNumber` and `memberUid`.
+
+.Create a file named `sysadmins_group.ldif`:
+[source,ldif]
+----
+dn: cn=sysadmins,ou=Groups,dc=example,dc=com
+objectClass: top
+objectClass: posixGroup
+cn: sysadmins
+gidNumber: 2001
+memberUid: jdoe
+memberUid: asmith
+description: System Administration Team
+----
+[NOTE]
+For `posixGroup`, `memberUid` takes the *value* of the `uid` attribute of the user, not the full DN. Also, ensure `gidNumber` is unique across all `posixGroup` entries in your directory.
+
+.Add the group entry to the directory:
+[source,bash,subs="attributes+"]
+----
+ldapadd -x -D "cn=Directory Manager" -W -f sysadmins_group.ldif -H ldap://localhost:389
+----
+Verify the addition. You can modify `memberUid` attributes similarly to `member` attributes by using `add:` and `delete:` operations.
+
+==== Step 5: Delete a Group Entry
+
+To remove a group that is no longer needed, simply delete its entry.
+
+[source,bash,subs="attributes+"]
+----
+ldapdelete -x -D "cn=Directory Manager" -W "cn=developers,ou=Groups,dc=example,dc=com" -H ldap://localhost:389
+----
+Verify the deletion using `ldapsearch`. You can also delete the `sysadmins` group if desired.
+
+== Expert Insights and Troubleshooting
+
+*   **Schema Enforcement**: RHDS strictly enforces the LDAP schema. If you try to add an attribute not allowed by an entry's object classes, or omit a required attribute, the operation will fail with a schema violation error. Always ensure your LDIF files conform to the schema defined for your directory.
+*   **DN Uniqueness**: Every entry in the DIT must have a unique Distinguished Name. Attempting to add an entry with a DN that already exists will result in an `Entry Already Exists` error.
+*   **Password Hashing**: While `userPassword: password` works for basic testing, in production, never store passwords in plaintext. RHDS supports various hashing schemes (e.g., SSHA, SSHA256, BCRYPT). When setting a password, it's best to use `ldappasswd` or ensure your LDIF file contains the `{SSHA}hashedpassword` format directly. RHDS can be configured to automatically hash plain text passwords for new entries if allowed by policy.
+*   **`member` vs. `memberUid`**: Remember the crucial distinction. `member` (from `groupOfNames`) takes a full DN. `memberUid` (from `posixGroup`) takes the *value* of the `uid` attribute of the user. Mixing these up is a common error leading to incorrect group memberships.
+*   **Referential Integrity**: For `groupOfNames`, if you delete a user who is a member of a group, the `member` attribute in the group will become a "dangling reference" (pointing to a non-existent entry) unless configured otherwise or manually cleaned up. RHDS does not automatically enforce referential integrity for `member` attributes by default, requiring administrative awareness or specific server-side plugins.
+*   **Alternative Tooling (`dsidm`)**: While `ldapadd`, `ldapmodify`, `ldapdelete`, and `ldapsearch` are fundamental for direct LDAP interaction, Red Hat Directory Server also provides the `dsidm` utility. `dsidm` offers a higher-level, more user-friendly abstraction for common administrative tasks, especially for user and group management, often requiring fewer manual LDIF files. For instance, `dsidm user add` and `dsidm group add` streamline these processes.
+*   **Error Messages**: Pay close attention to error messages from `ldapadd`/`ldapmodify`. They often provide clues about schema violations, unique constraint failures, or authentication issues. For example, "No such object" usually means a DN specified (e.g., for a `member` attribute) doesn't exist.
+
+This module provides a solid foundation for managing users and groups, which are the building blocks for identity management within your Red Hat Directory Server environment. Mastering these operations is key to effectively administering an LDAP directory.

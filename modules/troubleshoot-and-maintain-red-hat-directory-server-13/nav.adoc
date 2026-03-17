@@ -1,0 +1,7 @@
+* xref:troubleshoot-and-maintain-red-hat-directory-server-13.adoc[]
+** xref:identify-and-diagnose-common-rhds-issues-using-various-tools.adoc[]
+** xref:analyze-rhds-log-files-for-errors-warnings-and-performance-insights.adoc[]
+** xref:apply-performance-tuning-techniques-for-optimal-server-operation.adoc[]
+** xref:implement-robust-backup-and-restore-procedures-for-directory-data.adoc[]
+** xref:utilize-directory-server-utilities-for-routine-maintenance-tasks.adoc[]
+** xref:hands-on-lab-troubleshoot-and-resolve-common-rhds-operational-issues.adoc[]

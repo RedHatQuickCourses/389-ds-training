@@ -1,0 +1,165 @@
+#  Monitor RHDS server performance and resource utilization.
+
+// Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
+// Module: Configure Advanced Server Settings and Performance
+// Topic: Monitor RHDS server performance and resource utilization
+
+= Monitoring Red Hat Directory Server 13 Performance and Resource Utilization
+:page-aliases: rhds-monitoring.adoc
+:page-category: advanced-configuration
+:navtitle: Monitor Performance
+
+This section covers essential techniques for monitoring the performance and resource utilization of your Red Hat Directory Server 13 instances. Effective monitoring is crucial for maintaining server health, identifying bottlenecks, and ensuring optimal directory service delivery.
+
+== Importance of Monitoring RHDS
+
+Monitoring Red Hat Directory Server 13 (RHDS) is a proactive measure that provides deep insights into the server's operational state, resource consumption, and overall performance. It helps administrators:
+
+*   **Identify Performance Bottlenecks::** Pinpoint areas causing slow responses, such as high CPU usage, excessive disk I/O, or inefficient LDAP queries.
+*   **Ensure System Health::** Detect potential issues like low disk space, high memory consumption, or an increasing number of error messages before they impact service availability.
+*   **Plan Capacity::** Gather data on resource trends to make informed decisions about scaling the environment (e.g., adding more CPU, memory, or disk storage).
+*   **Troubleshoot Issues::** Provide critical diagnostic information when problems arise, allowing for faster root cause analysis.
+*   **Optimize Configuration::** Evaluate the impact of configuration changes, such as indexing or plugin adjustments, on server performance.
+
+== Key Metrics for Monitoring
+
+Monitoring RHDS involves observing both operating system (OS) level resources and RHDS-specific internal metrics.
+
+=== Operating System Level Resources
+
+These metrics indicate the server's overall health and resource availability.
+
+*   **CPU Utilization::** High CPU usage by the `ns-slapd` process or kernel indicates processing bottlenecks, potentially due to complex searches, frequent updates, or insufficient indexing.
+*   **Memory Usage::** Monitor the amount of RAM consumed by `ns-slapd`. Excessive memory usage leading to swapping can severely degrade performance. Key areas consuming memory include the database cache and connection buffers.
+*   **Disk I/O::** High disk read/write activity can point to inefficient database operations, frequent logging, or inadequate caching. Monitor latency and throughput.
+*   **Network I/O::** Observe network traffic to and from the RHDS server. Spikes could indicate a high volume of client requests or replication traffic.
+*   **Disk Space::** Ensure sufficient disk space for database files, transaction logs, and access/error logs. Running out of space can cause server outages.
+
+=== RHDS-Specific Metrics
+
+RHDS provides a rich set of internal metrics exposed through the `cn=monitor` entry within the directory itself. These metrics offer granular insights into LDAP operations, database performance, and server internal states.
+
+*   **LDAP Operation Statistics::**
+    ** `total_binds`, `total_searches`, `total_adds`, `total_modifies`, `total_deletes`: Total number of each operation type since the server started.
+    ** `current_connections`: Number of active client connections.
+    ** `anonymous_binds`, `unauthenticated_binds`, `simple_binds`: Breakdown of bind types.
+    ** `read_ops`, `write_ops`: Overall read/write operations.
+*   **Database Cache Statistics::**
+    ** `entry_cache_hits`, `entry_cache_misses`: Indicates the effectiveness of the entry cache. A low hit ratio suggests the cache is too small or workload patterns are not cache-friendly.
+    ** `dn_cache_hits`, `dn_cache_misses`: Effectiveness of the DN cache.
+*   **Replication Statistics (if configured)::**
+    ** `replica_update_rate`: Rate of updates processed by the consumer.
+    ** `replica_lag`: Time difference between supplier and consumer.
+*   **Connection Statistics::**
+    ** `current_connections`: Number of currently open connections.
+    ** `connections_in_queue`: Number of connections waiting to be processed.
+*   **Thread Statistics::**
+    ** `current_threads`, `max_threads`: Information about the thread pool used by the server.
+*   **Database Statistics (DBLM)::**
+    ** `db_files_used`: Number of database files in use.
+    ** `db_size`: Total size of the database.
+
+== Tools for Monitoring RHDS
+
+Several tools can be used to monitor RHDS, ranging from standard Linux utilities to RHDS-specific commands and LDAP queries.
+
+=== Standard Linux System Monitoring Tools
+
+*   `top` / `htop`:: Real-time view of running processes, CPU, memory, and swap usage.
+*   `vmstat`:: Reports virtual memory statistics, including processes, memory, swap, I/O, system, and CPU activity.
+*   `iostat`:: Monitors CPU utilization and I/O statistics for devices and partitions.
+*   `sar`:: Collects, reports, or saves system activity information (CPU, memory, disk, network). Useful for historical analysis.
+*   `netstat` / `ss`:: Displays network connections, routing tables, interface statistics, etc.
+*   `df` / `du`:: Check disk space usage.
+
+=== RHDS-Specific Monitoring Tools
+
+*   `ldapsearch` with `cn=monitor`:: The primary method for querying internal RHDS performance metrics.
+*   `dsctl`:: Can be used to check instance status, but not detailed performance metrics.
+*   RHDS Log Files:: `access` logs and `error` logs provide valuable information about client operations, server errors, and performance warnings. While the *configuration* of logging is a separate topic, *analyzing* them is key for troubleshooting performance.
+
+== Hands-on Lab: Monitoring RHDS Performance
+
+In this lab, you will use various tools to monitor the performance and resource utilization of your Red Hat Directory Server 13 instance.
+
+=== Prerequisites
+
+*   An installed and running RHDS 13 instance (as per previous labs).
+*   SSH access to the RHDS server.
+*   A user with sufficient privileges to perform `ldapsearch` operations on `cn=monitor` (e.g., `Directory Manager`).
+
+=== Activity 1: Basic OS-Level Resource Monitoring
+
+.   **Monitor CPU and Memory Usage with `top` or `htop`:**
+    .   Open a terminal and connect to your RHDS server via SSH.
+    .   Execute `top` (or `htop` if installed):
+        ```bash
+        top
+        ```
+        Observe the `%CPU` and `%MEM` columns for the `ns-slapd` process. This gives you a real-time snapshot of its resource consumption.
+    .   Press `q` to exit `top`.
+
+.   **Monitor Disk I/O with `iostat`:**
+    .   Execute `iostat -x 1 5` to get extended statistics every 1 second, 5 times:
+        ```bash
+        sudo iostat -x 1 5
+        ```
+        Pay attention to the `await` (average I/O wait time) and `%util` (percentage of CPU time spent on I/O) columns for the disk where your RHDS database is stored. High values can indicate disk bottlenecks.
+
+.   **Monitor Network Activity with `ss`:**
+    .   To see current network connections, including those to RHDS (port 389/636):
+        ```bash
+        ss -tunap | grep ns-slapd
+        ```
+        This command shows TCP and UDP connections with process information, filtered for `ns-slapd`.
+
+=== Activity 2: Monitoring RHDS-Specific Metrics using `cn=monitor`
+
+The `cn=monitor` entry provides a dynamic, pseudo-entry that allows you to query real-time server statistics using standard LDAP tools like `ldapsearch`.
+
+.   **Query Overall Server Statistics:**
+    .   Use `ldapsearch` to retrieve general server performance data. Replace `SERVER_IP` with your RHDS server's IP or hostname and `DIRECTORY_MANAGER_PASSWORD` with your Directory Manager password.
+        ```bash
+        ldapsearch -h SERVER_IP -p 389 -D "cn=Directory Manager" -w DIRECTORY_MANAGER_PASSWORD -s base -b "cn=monitor" "(objectclass=*)"
+        ```
+        Analyze the output for attributes like `current_connections`, `total_binds`, `total_searches`, `active_threads`, and `bytes_sent`/`bytes_received`.
+
+.   **Query Database Cache Statistics:**
+    .   To specifically look at the entry and DN cache performance:
+        ```bash
+        ldapsearch -h SERVER_IP -p 389 -D "cn=Directory Manager" -w DIRECTORY_MANAGER_PASSWORD -s base -b "cn=monitor,cn=userroot,cn=ldbm database,cn=plugins,cn=config" "(objectclass=*)" entry_cache_hits entry_cache_misses dn_cache_hits dn_cache_misses
+        ```
+        This command targets the `cn=userroot` suffix's database cache. If you have multiple suffixes, you might need to adjust the base DN. A high ratio of hits to misses indicates efficient caching.
+
+.   **Query LDAP Operation Statistics for a Specific Suffix:**
+    .   You can drill down into statistics for a particular database suffix. For the default `userroot` suffix:
+        ```bash
+        ldapsearch -h SERVER_IP -p 389 -D "cn=Directory Manager" -w DIRECTORY_MANAGER_PASSWORD -s base -b "cn=monitor,cn=userroot,cn=ldbm database,cn=plugins,cn=config" "(objectclass=*)" read_ops write_ops total_adds total_modifies total_deletes
+        ```
+        This shows the number of read, write, add, modify, and delete operations performed on the `userroot` database.
+
+.   **Query Replication Statistics (If Replication is Configured):**
+    .   If replication is configured, you can monitor its status. The exact DN may vary, but it typically looks like this:
+        ```bash
+        ldapsearch -h SERVER_IP -p 389 -D "cn=Directory Manager" -w DIRECTORY_MANAGER_PASSWORD -s base -b "cn=replication,cn=monitor" "(objectclass=*)"
+        ```
+        Look for attributes like `replica_update_rate`, `replication_status`, and `replica_lag` to assess replication health.
+        *(Note: If replication is not yet configured, this command might return no results or an error. This is normal.)*
+
+=== Activity 3: Simulating Load and Observing Monitoring Tools
+
+To see the monitoring tools in action, you can generate some load on the directory server.
+
+.   **Generate a Simple Search Load:**
+    .   In a *separate terminal window*, run a loop to continuously perform an LDAP search. *Adjust the base DN and search filter to match an existing entry in your directory.*
+        ```bash
+        for i in $(seq 1 100); do ldapsearch -h SERVER_IP -p 389 -D "cn=Directory Manager" -w DIRECTORY_MANAGER_PASSWORD -b "dc=example,dc=com" -s sub "uid=user$(( ( RANDOM % 10 )  + 1 ))" dn 1> /dev/null; sleep 0.1; done
+        ```
+        *(Replace `dc=example,dc=com` with your base DN and ensure `uid=userX` exists or modify the filter.)*
+
+.   **Observe Changes in Monitoring Tools:**
+    .   Switch back to your `top`/`htop` terminal. You should see an increase in `%CPU` for the `ns-slapd` process.
+    .   Rerun the `ldapsearch` command for overall server statistics (`cn=monitor`). Observe the `total_searches` and `current_connections` attributes incrementing.
+    .   Rerun the `ldapsearch` for database cache statistics. You might see `entry_cache_hits` increasing if the searches are repetitive.
+
+This lab demonstrates how to use both OS-level and RHDS-specific tools to monitor the performance and resource utilization of your Red Hat Directory Server. Regular monitoring and analysis of these metrics are key to maintaining a healthy and performant directory service.

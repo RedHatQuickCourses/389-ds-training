@@ -1,0 +1,360 @@
+#  Configure and troubleshoot multi-supplier (formerly multi-master) replication.
+
+= Configure and Troubleshoot Multi-Supplier Replication
+:nav_title: Multi-Supplier Replication
+:page-aliases: replication-multi-master.adoc, replication-troubleshooting.adoc
+
+[abstract]
+This module explores the critical concepts and practical implementation of multi-supplier (formerly multi-master) replication in Red Hat Directory Server 13. You will learn how to configure a robust, highly available directory infrastructure where multiple servers can accept write operations and synchronize data, along with essential troubleshooting techniques to maintain data consistency and operational integrity.
+
+Directory services are foundational for enterprise identity and access management. Ensuring their continuous availability and scalability is paramount. Multi-supplier replication addresses these needs by allowing multiple Directory Server instances to act as peers, each capable of accepting updates, thus enhancing fault tolerance and distributing the load.
+
+== Understanding Multi-Supplier Replication
+
+Multi-supplier replication is a high-availability and load-balancing strategy where every participating Directory Server instance is configured as both a *supplier* (sending changes) and a *consumer* (receiving changes) for the same data. This model ensures that any server can process write operations, and those changes are automatically propagated to all other configured suppliers.
+
+Historically, this was referred to as "multi-master replication." The term "multi-supplier" is the current preferred terminology in Red Hat Directory Server to better reflect the underlying mechanism where each server acts as a data *supplier* to its peers.
+
+=== Benefits of Multi-Supplier Replication
+
+*   **High Availability**: If one server becomes unavailable, others can continue to process requests, minimizing downtime.
+*   **Load Balancing**: Client applications can connect to any available server for both read and write operations, distributing the operational load.
+*   **Disaster Recovery**: Replicated data across geographically separate instances provides resilience against localized failures.
+*   **Scalability**: Easily add more Directory Server instances to handle increased client demand.
+
+=== Core Concepts
+
+To grasp multi-supplier replication, it's essential to understand these key components:
+
+*   **Replication Agreement**: A logical connection configured between two Directory Server instances that defines how and what data is replicated. In a multi-supplier setup, you typically configure agreements in both directions between any two peers that need to exchange updates.
+*   **Change Log (Retro Change Log)**: A special database within each Directory Server instance that records all modifications (add, modify, delete) made to the directory data. This log is crucial for replication, as suppliers read changes from their change log and send them to consumers.
+*   **Replication Manager DN**: A special user entry (DN) with specific permissions that the Directory Server uses to bind to other directory servers and perform replication operations. It needs sufficient privileges to read the change log and write to the replicated suffixes.
+*   **Suffix**: The root of a specific directory tree (e.g., `dc=example,dc=com`). Replication is always configured at the suffix level.
+*   **Replica ID**: A unique identifier for each Directory Server instance participating in replication. This helps the servers track which changes have been sent and received, preventing replication loops.
+*   **Conflict Resolution**: In a multi-supplier environment, it's possible for the same entry to be modified concurrently on different suppliers. RHDS includes mechanisms to resolve such conflicts, typically using a "last-writer wins" approach based on internal timestamps or a configured priority.
+
+image::replication-multi-supplier.svg[Multi-Supplier Replication Diagram,width=700,alt="Diagram showing three Red Hat Directory Server instances, each connected to every other instance with bidirectional replication agreements, forming a mesh network. All instances are labeled as 'Supplier/Consumer'."]
+_Figure: Multi-Supplier Replication Topology_
+
+== Configuring Multi-Supplier Replication
+
+This hands-on lab will guide you through setting up a basic two-way multi-supplier replication between two RHDS 13 instances. For this lab, we'll assume you have two Red Hat Enterprise Linux 9 systems, `server1.example.com` and `server2.example.com`, each with an RHDS 13 instance already installed and initialized.
+
+=== Lab: Setting up Two-Way Multi-Supplier Replication
+
+In this lab, you will configure `server1` and `server2` to replicate the `dc=example,dc=com` suffix bidirectionally.
+
+==== Prerequisites
+
+Ensure the following conditions are met on both `server1.example.com` and `server2.example.com`:
+
+*   **RHDS 13 Instance Initialized**: Both servers have an RHDS instance running, for example, named `instance1`.
+*   **Network Connectivity**: Servers can reach each other on the RHDS LDAP/LDAPS ports (default 389/636).
+*   **DNS Resolution**: FQDNs `server1.example.com` and `server2.example.com` resolve correctly on both machines.
+*   **Admin Access**: You have `root` or `sudo` privileges.
+
+==== Step 1: Prepare RHDS Instances (on both servers)
+
+For consistency, let's ensure our `dc=example,dc=com` suffix exists on both instances and has a basic entry.
+
+.On `server1` and `server2`, add a base entry for the `dc=example,dc=com` suffix if not already present.
++
+[source,bash]
+----
+# Create base.ldif
+cat << EOF > /tmp/base.ldif
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Example Company
+dc: example
+EOF
+
+# Add the entry
+ldapadd -x -D "cn=Directory Manager" -W -f /tmp/base.ldif
+----
+
+==== Step 2: Enable Change Log on Both Servers
+
+The change log (often referred to as the Retro Change Log) is essential for replication. It captures all modifications to directory data.
+
+.On *both `server1` and `server2`*, enable the retro change log for the `dc=example,dc=com` suffix.
++
+[source,bash]
+----
+# Replace 'instance1' with your RHDS instance name if different
+dsconf -D "cn=Directory Manager" ldap://localhost -W \
+  replica add-changelog --suffix "dc=example,dc=com" instance1
+----
++
+You will be prompted for the Directory Manager password.
++
+[NOTE]
+The `dsconf replica add-changelog` command automatically configures the `cn=changelog` suffix and the `retro changelog` plugin.
+
+==== Step 3: Create Replication Manager Entry
+
+Each server needs a dedicated user account with specific permissions to manage replication. This account will be used by one server to bind to its peer and perform updates. For simplicity, we'll use a `cn=replication manager,dc=example,dc=com` entry for both.
+
+.On *both `server1` and `server2`*, create the replication manager entry.
++
+[source,bash]
+----
+# Create repmgr.ldif
+cat << EOF > /tmp/repmgr.ldif
+dn: cn=replication manager,dc=example,dc=com
+objectClass: inetorgperson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: replication manager
+sn: manager
+userPassword: replication_manager_password <1>
+EOF
+
+# Add the entry
+ldapadd -x -D "cn=Directory Manager" -W -f /tmp/repmgr.ldif
+----
+<1> Replace `replication_manager_password` with a strong password. Remember this password, as it will be used in the next steps.
+
+==== Step 4: Configure Replication Agreements
+
+Now, we'll establish the bidirectional replication agreements. Each server will have two agreements: one for sending changes to its peer, and one for receiving changes from its peer. However, `dsconf` simplifies this; you create a single agreement *from* one server *to* another, and it implicitly configures the supplier side.
+
+.On `server1.example.com`, create a replication agreement to `server2.example.com`.
++
+[source,bash]
+----
+# Replace 'instance1' with your RHDS instance name if different
+# Replace 'replication_manager_password' with the password you set in Step 3
+dsconf -D "cn=Directory Manager" ldap://localhost -W \
+  replica create \
+  --replica-id 1 \ <1>
+  --suffix "dc=example,dc=com" \
+  --role supplier \
+  --bind-dn "cn=replication manager,dc=example,dc=com" \
+  --bind-credentials "replication_manager_password" \
+  --transport-type "ldap" \
+  --destination-host "server2.example.com" \
+  --destination-port 389 \
+  --agreements "server1-to-server2" \
+  instance1
+----
+<1> Each server in a replication topology must have a unique replica ID (a positive integer). For `server1`, we'll use `1`.
+
+.On `server2.example.com`, create a replication agreement to `server1.example.com`.
++
+[source,bash]
+----
+# Replace 'instance1' with your RHDS instance name if different
+# Replace 'replication_manager_password' with the password you set in Step 3
+dsconf -D "cn=Directory Manager" ldap://localhost -W \
+  replica create \
+  --replica-id 2 \ <1>
+  --suffix "dc=example,dc=com" \
+  --role supplier \
+  --bind-dn "cn=replication manager,dc=example,dc=com" \
+  --bind-credentials "replication_manager_password" \
+  --transport-type "ldap" \
+  --destination-host "server1.example.com" \
+  --destination-port 389 \
+  --agreements "server2-to-server1" \
+  instance1
+----
+<1> For `server2`, we'll use `2`.
+
+==== Step 5: Initialize the Replication (Mandatory for a new consumer, or if data is not identical)
+
+If `server2` had no data in `dc=example,dc=com` or its data was inconsistent, you would need to initialize it from `server1`. Since we added a base entry on both, we can skip explicit initialization here, but it's a crucial step in real-world deployments.
+
+.To explicitly initialize `server2` from `server1` (perform this on `server2`):
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost -W \
+  replica initialize \
+  --agreement "server2-to-server1" \
+  instance1
+----
++
+This command tells `server2` to pull a full copy of the `dc=example,dc=com` suffix from `server1` using the specified agreement. You would typically do this when adding a new, empty consumer to an existing topology.
+
+==== Step 6: Verify Replication
+
+Now that agreements are in place, let's verify that changes propagate.
+
+.On `server1.example.com`, add a new user entry.
++
+[source,bash]
+----
+# Create user1.ldif
+cat << EOF > /tmp/user1.ldif
+dn: uid=user1,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: User One
+sn: One
+uid: user1
+userPassword: password
+EOF
+
+ldapadd -x -D "cn=Directory Manager" -W -f /tmp/user1.ldif
+----
+
+.On `server2.example.com`, search for the newly added user.
++
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -W \
+  -b "dc=example,dc=com" "(uid=user1)"
+----
++
+You should see the `uid=user1` entry returned. If not, wait a few moments and try again. Replication is typically very fast but not instantaneous.
+
+.On `server2.example.com`, add another user entry.
++
+[source,bash]
+----
+# Create user2.ldif
+cat << EOF > /tmp/user2.ldif
+dn: uid=user2,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: User Two
+sn: Two
+uid: user2
+userPassword: password
+EOF
+
+ldapadd -x -D "cn=Directory Manager" -W -f /tmp/user2.ldif
+----
+
+.On `server1.example.com`, search for the user added on `server2`.
++
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -W \
+  -b "dc=example,dc=com" "(uid=user2)"
+----
++
+This confirms bidirectional replication is working.
+
+.To check the status of replication agreements on a server:
++
+[source,bash]
+----
+dsctl replication "instance1" status
+----
++
+This command will provide detailed output about the state of each replication agreement, including the last update received/sent and any pending changes. Look for `Last update started` and `Last update ended` timestamps that are recent, and `Number of changes sent` and `Number of changes received` incrementing.
+
+== Troubleshooting Multi-Supplier Replication
+
+Replication issues can be challenging to diagnose. Understanding common symptoms and using the right tools is key.
+
+=== Common Replication Issues
+
+*   **Replication Lag**: Changes appear on one server but take a long time to propagate to others.
+*   **Data Inconsistency**: Entries are missing or different across servers that should be synchronized.
+*   **Agreement Not Forming**: Replication agreements fail to establish or stay connected.
+*   **Insufficient Permissions**: The Replication Manager DN lacks necessary access.
+*   **Network Problems**: Firewalls, incorrect IP/port, or general network latency.
+*   **Disk Space Issues**: Full disk on any server, especially where the change log resides.
+*   **Incorrect Replica IDs**: Duplicate replica IDs in the topology.
+
+=== Troubleshooting Tools and Techniques
+
+1.  **Check Replication Status (`dsctl replication status`)**:
+    The `dsctl replication <instance_name> status` command is your primary tool. It provides agreement-specific details like:
+    *   `Replica update in progress`: Indicates if replication is active.
+    *   `Last update started`/`ended`: Timestamps of the last successful replication cycle.
+    *   `Last change number sent`/`received`: Shows the highest change ID replicated.
+    *   `Number of changes sent`/`received`: How many operations have been replicated.
+    *   `Error message`: Any specific errors preventing replication.
+
+    Example output snippet:
+    [source,text]
+    ----
+    ...
+    Agreement name: server1-to-server2
+        Role: Supplier
+        Connection status: Connected
+        Last update started: 2023-10-27T10:00:05Z
+        Last update ended: 2023-10-27T10:00:05Z
+        Last change number sent: 1234
+        Number of changes sent: 50
+    ...
+    ----
+
+2.  **Examine Server Logs (`/var/log/dirsrv/slapd-<instance_name>/errors`)**:
+    The main error log for your RHDS instance is crucial. Look for messages containing "replication," "changelog," "replica," or specific error codes (e.g., LDAP error codes). These logs often provide explicit reasons for replication failures, such as authentication errors for the replication manager or connection issues.
+
+3.  **Verify Network Connectivity**:
+    *   Use `ping` or `traceroute` to check basic IP connectivity.
+    *   Use `telnet <hostname> <port>` or `nc -vz <hostname> <port>` to ensure the LDAP/LDAPS port is open and accessible from the peer server.
+    *   Check firewall rules (`firewall-cmd --list-all` or `iptables -vnL`) on both servers.
+
+4.  **Check Replication Manager Permissions**:
+    Ensure the `cn=replication manager,dc=example,dc=com` entry exists on *both* servers and its password is correct in the replication agreement. The Replication Manager DN requires the following ACIs (Access Control Instructions) on the replicated suffix (e.g., `dc=example,dc=com`):
+    *   Read access to the change log (`cn=changelog`).
+    *   Write access to the replicated suffix on the consumer server.
+    *   This is typically handled automatically when configuring replication with `dsconf replica create`. However, if you created custom ACIs, they might interfere.
+
+5.  **Verify Replica IDs**:
+    Each server in a replication topology must have a unique `replica-id`. You can check this using:
+    [source,bash]
+    ----
+    dsconf -D "cn=Directory Manager" ldap://localhost -W \
+      backend info --suffix "dc=example,dc=com" instance1 | grep "replica-id"
+    ----
+    If you have duplicate replica IDs, you must correct them on one of the servers.
+
+6.  **Manually Trigger Replication (if needed)**:
+    Sometimes, for testing or to force synchronization, you can disable and enable an agreement:
+    [source,bash]
+    ----
+    # Disable
+    dsconf -D "cn=Directory Manager" ldap://localhost -W \
+      replica disable --agreement "server1-to-server2" instance1
+
+    # Enable
+    dsconf -D "cn=Directory Manager" ldap://localhost -W \
+      replica enable --agreement "server1-to-server2" instance1
+    ----
+
+7.  **Data Consistency Checks**:
+    If you suspect data inconsistencies, you might need to perform an `ldif` export from both servers and use a `diff` tool to compare them.
+    [source,bash]
+    ----
+    ldapsearch -x -D "cn=Directory Manager" -W \
+      -b "dc=example,dc=com" "(objectClass=*)" > server1_data.ldif
+    ----
+    Repeat on `server2` and compare `server1_data.ldif` with `server2_data.ldif`.
+
+=== Resolving Replication Conflicts
+
+In a multi-supplier environment, simultaneous updates to the same entry on different suppliers can lead to conflicts. Red Hat Directory Server primarily uses a "last-writer wins" strategy based on internal timestamps associated with each attribute and entry. The update with the most recent timestamp is the one that prevails.
+
+While RHDS handles this automatically, consistently encountering conflicts might indicate:
+
+*   **Application Design Issues**: Applications updating the same entry on different servers without proper coordination.
+*   **Clock Skew**: Significant time differences between servers can cause issues with timestamp-based conflict resolution. Ensure NTP (Network Time Protocol) is configured on all RHDS hosts.
+
+For specific conflict resolution scenarios, the `errors` log will typically show messages indicating conflicts were detected and resolved. Advanced users can sometimes customize conflict resolution through specific plugins, but this is rare for standard deployments.
+
+== Best Practices for Multi-Supplier Replication
+
+*   **NTP Synchronization**: Ensure all RHDS servers have their clocks synchronized using NTP to prevent issues with timestamp-based conflict resolution and general logging accuracy.
+*   **Monitoring**: Regularly monitor replication status using `dsctl replication status` and system metrics (CPU, memory, disk I/O, network) to catch issues early. Integrate with your enterprise monitoring solution.
+*   **Secure Communications**: Always configure replication agreements to use TLS/SSL (`ldaps` or `starttls`) for secure communication between servers, especially in production environments.
+*   **Dedicated Replication Manager**: Use a dedicated, non-personnel entry for the Replication Manager DN with a strong, unique password.
+*   **Sufficient Resources**: Ensure servers have adequate CPU, memory, and fast disk I/O (especially for the `changelog` and database files) to handle replication traffic and client operations efficiently.
+*   **Consistent Schema**: All servers in a replication topology must share an identical schema. Any schema modifications should be applied consistently across all replicas.
+*   **Backup and Restore Strategy**: Have a robust backup and restore plan that accounts for replicated environments. While replication provides availability, it's not a substitute for backups against accidental deletions or data corruption.
+*   **Avoid Manual Changes on Consumers**: In a supplier-consumer setup, direct modifications on the consumer are generally discouraged as they can be overwritten by the supplier. In multi-supplier, all are writable, so this is less of an issue, but consistency is key.
+*   **Testing**: Thoroughly test your replication setup during deployment and after any significant configuration changes. Test various failure scenarios (e.g., one server going offline, network partition).

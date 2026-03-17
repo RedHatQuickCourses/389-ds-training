@@ -1,0 +1,384 @@
+#  Hands-on Lab: Troubleshoot and resolve common RHDS operational issues.
+
+= Hands-on Lab: Troubleshoot and Resolve Common RHDS Operational Issues
+
+In this hands-on lab, you will apply your knowledge to diagnose and resolve common operational issues encountered with Red Hat Directory Server 13. Effective troubleshooting is a critical skill for any system administrator, ensuring the stability and performance of directory services.
+
+=== Learning Objectives
+
+Upon completion of this lab, you will be able to:
+
+*   Utilize RHDS command-line tools and system utilities to diagnose server problems.
+*   Analyze RHDS log files to identify root causes of issues.
+*   Resolve common RHDS operational problems such as startup failures, authentication issues, and performance bottlenecks.
+*   Apply a systematic approach to troubleshooting directory server incidents.
+
+=== Prerequisites
+
+*   A running Red Hat Enterprise Linux 9 system with `sudo` privileges.
+*   Red Hat Directory Server 13 installed and an instance initialized (e.g., using the setup from the "Deploy and perform initial configuration of an RHDS instance" lab).
+*   Basic familiarity with `dsctl`, `dsconf`, `ldapsearch`, and `systemctl`.
+
+=== Introduction to RHDS Troubleshooting Methodology
+
+Troubleshooting RHDS typically involves a systematic approach:
+
+1.  **Identify the Symptom:** What is not working as expected? (e.g., "Server won't start," "Users can't log in," "Searches are slow").
+2.  **Gather Information:** Check server status, review relevant log files, examine configuration.
+3.  **Formulate a Hypothesis:** Based on the information, what do you think is causing the problem?
+4.  **Test the Hypothesis:** Try a potential fix or gather more specific data.
+5.  **Implement Solution:** Apply the fix if the hypothesis is confirmed.
+6.  **Verify Resolution:** Ensure the problem is gone and no new issues have arisen.
+
+Key tools for troubleshooting include:
+
+*   `dsctl`: For managing instance lifecycle and checking status.
+*   `dsconf`: For inspecting and modifying instance configuration.
+*   `dsidm`: For managing database and user/group-specific attributes.
+*   `ldapsearch`: For verifying directory data and connectivity.
+*   System logs: `journalctl -u dirsrv@your_instance_name` or directly checking `error`, `access`, and `audit` logs in `/var/log/dirsrv/slapd-your_instance_name/`.
+*   Network tools: `ss` or `netstat` to check port listening.
+*   File system tools: `df -h` to check disk space, `ls -l` to check permissions.
+
+=== Hands-on Activity: Troubleshooting Scenarios
+
+==== Scenario 1: Server Fails to Start Due to Port Conflict
+
+In this scenario, you will intentionally cause a port conflict and then troubleshoot why the RHDS instance fails to start.
+
+. **Problem Simulation: Create a Port Conflict**
++
+We will simulate a port conflict by trying to start a dummy web server on the default LDAP port (389) or LDAPS port (636) before RHDS starts.
++
+.. First, ensure your RHDS instance is running and note its default LDAP port. Replace `instance_name` with your actual instance name.
++
+[source,bash]
+----
+sudo dsctl status instance_name
+sudo dsconf -D "cn=Directory Manager" ldap://localhost:389 config get nsslapd-port
+----
++
+Assuming the default port is 389.
++
+.. Stop your RHDS instance.
++
+[source,bash]
+----
+sudo dsctl stop instance_name
+----
++
+.. Start a simple Python web server on port 389 to simulate a conflict.
++
+[source,bash]
+----
+sudo python3 -m http.server 389 &
+----
++
+[NOTE]
+The `&` puts the process in the background. Note the process ID (PID) if shown, or you can find it later with `ps aux | grep "http.server 389"`.
++
+.. Attempt to start the RHDS instance.
++
+[source,bash]
+----
+sudo dsctl start instance_name
+----
++
+You should see an error indicating the server failed to start.
+
+. **Diagnosis: Identify the Port Conflict**
++
+.. Check the `systemctl` status for your RHDS instance.
++
+[source,bash]
+----
+sudo systemctl status dirsrv@instance_name.service
+----
++
+You'll likely see `Active: failed` and some errors.
++
+.. Examine the RHDS error log for your instance. This is the primary place to find startup issues.
++
+[source,bash]
+----
+sudo tail -f /var/log/dirsrv/slapd-instance_name/errors
+----
++
+Look for messages similar to "listen attempt on port XXX failed" or "Address already in use."
++
+.. Verify which process is occupying port 389 using `ss` or `netstat`.
++
+[source,bash]
+----
+sudo ss -tulnp | grep 389
+# or
+sudo netstat -tulnp | grep 389
+----
++
+You should see the Python `http.server` process listening on port 389.
+
+. **Resolution: Free the Port and Start RHDS**
++
+.. Kill the conflicting Python web server process. Find its PID from the `ss` or `ps aux` output and replace `PID` below.
++
+[source,bash]
+----
+sudo kill PID
+# Example: sudo kill 12345
+----
++
+.. Verify the port is free.
++
+[source,bash]
+----
+sudo ss -tulnp | grep 389
+----
++
+This command should now return no output for port 389.
++
+.. Start the RHDS instance again.
++
+[source,bash]
+----
+sudo dsctl start instance_name
+----
+
+. **Verification**
++
+.. Check the RHDS instance status.
++
+[source,bash]
+----
+sudo dsctl status instance_name
+----
++
+It should now show `Server is running`.
++
+.. Perform a simple `ldapsearch` to confirm connectivity.
++
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 -b "" -s base objectclass=*
+----
++
+You should receive output detailing the server's root DSE.
+
+==== Scenario 2: User Authentication Failure and Account Lockout
+
+This scenario will simulate a user repeatedly failing to authenticate, leading to an account lockout, and then guide you through diagnosing and resolving it.
+
+. **Problem Simulation: Trigger Account Lockout**
++
+.. First, ensure you have a regular user in your directory. If not, create one:
++
+[source,bash]
+----
+# Create an LDIF file (e.g., user_entry.ldif)
+cat << EOF > user_entry.ldif
+dn: uid=testuser,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Test User
+sn: User
+uid: testuser
+userPassword: password
+EOF
+
+# Add the user (replace dc=example,dc=com with your base DN)
+ldapadd -x -D "cn=Directory Manager" -W -f user_entry.ldif
+----
++
+.. Intentionally attempt to bind as `testuser` with an incorrect password multiple times to trigger an account lockout. By default, RHDS locks an account after 5 consecutive failed bind attempts within a short period.
++
+[source,bash]
+----
+for i in {1..6}; do ldapsearch -x -D "uid=testuser,ou=People,dc=example,dc=com" -w "wrongpassword" -b "dc=example,dc=com" uid=testuser; sleep 1; done
+----
++
+You should observe "Invalid credentials" errors.
++
+.. After the loop, attempt to bind with the correct password.
++
+[source,bash]
+----
+ldapsearch -x -D "uid=testuser,ou=People,dc=example,dc=com" -w "password" -b "dc=example,dc=com" uid=testuser
+----
++
+This should still fail, likely with a message indicating the account is locked.
+
+. **Diagnosis: Identify Account Lockout**
++
+.. Examine the RHDS `access` log. This log records bind attempts and their outcomes.
++
+[source,bash]
+----
+sudo tail -f /var/log/dirsrv/slapd-instance_name/access
+----
++
+You should see multiple `BIND` operations with `result=49` (Invalid Credentials) followed by entries indicating account lockout, such as `account locked for uid=testuser`.
++
+.. Retrieve the `nsAccountLock` attribute for the `testuser` entry.
++
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -W -b "uid=testuser,ou=People,dc=example,dc=com" nsAccountLock
+----
++
+If the account is locked, `nsAccountLock: true` will be present.
+
+. **Resolution: Unlock the Account**
++
+.. To unlock an account, you need to modify the `nsAccountLock` attribute.
++
+[source,bash]
+----
+# Create an LDIF file (e.g., unlock.ldif)
+cat << EOF > unlock.ldif
+dn: uid=testuser,ou=People,dc=example,dc=com
+changetype: modify
+delete: nsAccountLock
+EOF
+
+# Apply the modification
+ldapmodify -x -D "cn=Directory Manager" -W -f unlock.ldif
+----
++
+[NOTE]
+Deleting the `nsAccountLock` attribute effectively unlocks the account. Setting it to `false` is not typically how it's done; removing it signals the account is not locked.
+
+. **Verification**
++
+.. Attempt to bind as `testuser` with the correct password again.
++
+[source,bash]
+----
+ldapsearch -x -D "uid=testuser,ou=People,dc=example,dc=com" -w "password" -b "dc=example,dc=com" uid=testuser
+----
++
+The bind should now be successful, and the user's entry should be returned.
+
+==== Scenario 3: Slow Search Performance Due to Missing Index
+
+In this scenario, you will observe slow search performance for an unindexed attribute and then resolve it by adding an appropriate index.
+
+. **Problem Simulation: Create and Search Unindexed Data**
++
+.. First, ensure you have some entries with a specific attribute that is not typically indexed by default (e.g., `description`). If you don't have many, add a few more.
++
+[source,bash]
+----
+# Add a few users with distinct descriptions
+for i in {1..50}; do
+  cat << EOF > user$i.ldif
+dn: uid=user$i,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: User $i
+sn: User$i
+uid: user$i
+userPassword: password$i
+description: This is a test user number $i with unique data for indexing checks.
+EOF
+  ldapadd -x -D "cn=Directory Manager" -W -f user$i.ldif
+done
+----
++
+.. Now, perform a search on the `description` attribute and observe the time it takes.
++
+[source,bash]
+----
+time ldapsearch -x -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(description=*unique data*)" cn description
+----
++
+Make a mental note (or record) of the `real` time reported by the `time` command. This will be your baseline.
+
+. **Diagnosis: Identify Missing Index**
++
+.. Check the `access` log for slow search warnings. RHDS often logs warnings if a search is performed on an unindexed attribute over a large data set.
++
+[source,bash]
+----
+sudo tail -f /var/log/dirsrv/slapd-instance_name/access
+----
++
+Look for `SRCH` entries with a high `etime` (elapsed time) and potentially `unindexed` warnings.
++
+.. Inspect the current indexing configuration for your database suffix using `dsconf`.
++
+[source,bash]
+----
+sudo dsconf -D "cn=Directory Manager" ldap://localhost:389 suffix list --suffix "dc=example,dc=com"
+sudo dsconf -D "cn=Directory Manager" ldap://localhost:389 suffix "dc=example,dc=com" index list
+----
++
+You'll likely notice that `description` is not listed or only has a basic `equality` index (which might not be sufficient for substring searches like `*unique data*`). For substring searches, you usually need `substring` indexing.
+
+. **Resolution: Add a Substring Index for `description`**
++
+.. Add a `substring` index for the `description` attribute using `dsconf`.
++
+[source,bash]
+----
+sudo dsconf -D "cn=Directory Manager" ldap://localhost:389 suffix "dc=example,dc=com" index add --attr description --type substring
+----
++
+.. Rebuild the index. This step is crucial for the new index to take effect on existing data.
++
+[source,bash]
+----
+sudo dsconf -D "cn=Directory Manager" ldap://localhost:389 suffix "dc=example,dc=com" index rebuild description
+----
++
+This command might take some time depending on the size of your directory. Monitor the `error` log for progress or completion.
+
+. **Verification**
++
+.. Once the index rebuild is complete, re-run the `ldapsearch` command and compare the execution time.
++
+[source,bash]
+----
+time ldapsearch -x -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(description=*unique data*)" cn description
+----
++
+You should observe a significant reduction in the `real` time, indicating that the index is now being used effectively.
++
+.. You can also confirm the index using `dsconf`.
++
+[source,bash]
+----
+sudo dsconf -D "cn=Directory Manager" ldap://localhost:389 suffix "dc=example,dc=com" index list
+----
++
+The output should now include `description` with `substring` indexing.
+
+=== Cleanup (Optional)
+
+If you created extra users or files for this lab, you might want to clean them up.
+
+[source,bash]
+----
+# Stop the RHDS instance
+sudo dsctl stop instance_name
+
+# Remove the created LDIF files
+rm user_entry.ldif unlock.ldif user*.ldif
+
+# Remove the created users (use with caution!)
+# You would typically do this with ldapdelete for each user,
+# or if you used a specific ou, you could delete the ou.
+# For example, to delete uid=testuser,ou=People,dc=example,dc=com:
+# ldapdelete -x -D "cn=Directory Manager" -W "uid=testuser,ou=People,dc=example,dc=com"
+# For multiple users created for indexing:
+# for i in {1..50}; do ldapdelete -x -D "cn=Directory Manager" -W "uid=user$i,ou=People,dc=example,dc=com"; done
+
+# Restart RHDS instance
+sudo dsctl start instance_name
+----
+
+=== Conclusion
+
+This lab provided practical experience in troubleshooting common Red Hat Directory Server operational issues. You've learned to systematically approach problems, leverage essential RHDS utilities and log files for diagnosis, and implement resolutions for startup failures, authentication lockouts, and search performance degradation. These skills are fundamental to maintaining a healthy and performant directory service environment.

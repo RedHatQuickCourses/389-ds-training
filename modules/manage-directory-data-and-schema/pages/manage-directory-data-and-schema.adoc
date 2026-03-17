@@ -1,0 +1,9 @@
+#  Manage Directory Data and Schema
+
+Manage Directory Data and Schema involves:
+
+* xref:administering-ldap-data.adoc[Performing LDAP data manipulation] (add, modify, delete entries) via command-line tools.
+* xref:ldap-search-operations.adoc[Executing efficient LDAP searches] to retrieve directory information.
+* xref:understanding-ldap-schema.adoc[Managing LDAP schema], including object classes and attributes.
+* xref:import-export-data.adoc[Importing and exporting directory data] using LDIF files.
+* xref:user-group-management.adoc[Administering user and group entries] within the directory.

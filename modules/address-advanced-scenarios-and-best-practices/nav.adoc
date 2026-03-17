@@ -1,0 +1,6 @@
+* xref:address-advanced-scenarios-and-best-practices.adoc[]
+** xref:design-high-availability-architectures-for-rhds-deployments.adoc[]
+** xref:discuss-integration-strategies-with-other-red-hat-identity-management-solutions.adoc[]
+** xref:evaluate-performance-considerations-for-large-scale-directory-environments.adoc[]
+** xref:diagnose-and-resolve-complex-deployment-and-configuration-challenges-through-realistic-scenarios.adoc[]
+** xref:hands-on-lab-solve-integrated-troubleshooting-and-deployment-scenarios.adoc[]

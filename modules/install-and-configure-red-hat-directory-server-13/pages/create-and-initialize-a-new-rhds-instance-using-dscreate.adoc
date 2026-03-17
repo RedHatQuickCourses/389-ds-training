@@ -1,0 +1,171 @@
+#  Create and initialize a new RHDS instance using `dscreate`.
+
+:rhds-install-configure:create-instance-dscreate.adoc[]
+= Create and Initialize a New RHDS Instance using `dscreate`
+
+This section guides you through the process of creating and initializing a Red Hat Directory Server 13 instance using the `dscreate` utility. This tool simplifies the initial setup, ensuring a correct and functional directory server environment.
+
+[[dscreate-introduction]]
+== Understanding `dscreate`
+
+`dscreate` is the primary command-line utility for creating and initializing new Red Hat Directory Server 13 instances. It automates the complex initial configuration steps, allowing administrators to quickly deploy a functional directory server.
+
+When you run `dscreate`, it performs several critical actions:
+
+*   **Instance Directory Creation**: It sets up dedicated directories for the new instance's configuration (`/etc/dirsrv/slapd-_instance_name`), data (`/var/lib/dirsrv/slapd-_instance_name`), and logs (`/var/log/dirsrv/slapd-_instance_name`). Each instance has its own isolated environment.
+*   **Schema Initialization**: It populates the directory with the default LDAP schema, defining standard object classes and attributes.
+*   **Core Configuration (`dse.ldif`)**: It creates the crucial `dse.ldif` file within the instance's configuration directory. This file contains the server's fundamental configuration, including details like the server identifier, suffixes, and database settings.
+*   **Database Creation**: It initializes the primary database for storing directory entries (typically based on LMDB).
+*   **Service Registration**: It registers the new instance with the `dsctl` utility, enabling lifecycle management (start, stop, restart, status).
+*   **Initial Start**: By default, `dscreate` starts the newly created directory server instance immediately after initialization.
+
+=== Key Information Required by `dscreate`
+
+To create an RHDS instance, `dscreate` requires several essential pieces of information:
+
+*   **Instance Name**: A unique identifier for the Directory Server instance (e.g., `myinstance`, `idm_directory`). This name is used in paths and `dsctl` commands.
+*   **Directory Manager DN**: The Distinguished Name (DN) of the administrative user who has full control over the directory. By convention, this is often `cn=Directory Manager`.
+*   **Directory Manager Password**: The password for the Directory Manager DN. This password should be strong and kept secure.
+*   **LDAP Port**: The port number on which the unsecured LDAP service will listen (commonly `389`).
+*   **LDAPS (Secure LDAP) Port**: The port number on which the secured LDAP service will listen using TLS/SSL (commonly `636`).
+*   **Default Suffix (Base DN)**: The top-level DN of your directory information tree (DIT). This defines the root of your directory data (e.g., `dc=example,dc=com`, `o=Acme Corporation`).
+*   **Server FQDN (Fully Qualified Domain Name)**: The hostname of the server where RHDS is being installed (e.g., `server.example.com`). This is important for certificate generation and network identification.
+*   **System User and Group**: The non-privileged user and group under which the directory server process will run (typically `dirsrv:dirsrv` by default). This enhances security by isolating the service.
+
+`dscreate` offers both an interactive mode, where it prompts you for these details, and a non-interactive mode, where you can provide all parameters via command-line arguments or a configuration file.
+
+[[hands-on-create-instance]]
+== Hands-on Lab: Deploy and Perform Initial Configuration of an RHDS Instance
+
+In this lab, you will deploy a new Red Hat Directory Server 13 instance using `dscreate` in interactive mode. This will familiarize you with the required parameters and the basic setup process.
+
+=== Objective
+
+Deploy an RHDS instance named `myinstance` with the following characteristics:
+
+*   *Instance Name*: `myinstance`
+*   *Directory Manager DN*: `cn=Directory Manager`
+*   *Directory Manager Password*: `P@ssw0rd123` (For lab purposes only; use a strong, unique password in production)
+*   *LDAP Port*: `389`
+*   *LDAPS Port*: `636`
+*   *Default Suffix*: `dc=example,dc=com`
+*   *Server FQDN*: Your server's actual FQDN (e.g., `server.example.com`).
+
+=== Prerequisites
+
+*   A Red Hat Enterprise Linux 9 system.
+*   The `redhat-directory-server` package installed on your system (as covered in previous objectives).
+*   Root access or `sudo` privileges.
+
+=== Lab Steps
+
+. **Log in as root or use `sudo`**:
++
+----
+sudo -i
+----
+
+. **Start the `dscreate` interactive utility**:
++
+This command will guide you through the instance creation process by prompting for the necessary information.
++
+----
+dscreate interactive
+----
+
+. **Respond to the prompts as follows**:
++
+When prompted, enter the specified values. Pay attention to the default values provided by `dscreate` and either accept them by pressing `Enter` or override them.
+
+*   `Instance name`: `myinstance`
+*   `System User [dirsrv]`: Press `Enter` to accept `dirsrv`
+*   `System Group [dirsrv]`: Press `Enter` to accept `dirsrv`
+*   `Directory Manager DN [cn=Directory Manager]`: Press `Enter` to accept `cn=Directory Manager`
+*   `Password for Directory Manager`: `P@ssw0rd123`
+*   `Confirm password`: `P@ssw0rd123`
+*   `LDAP Port [389]`: Press `Enter` to accept `389`
+*   `LDAPS Port [636]`: Press `Enter` to accept `636`
+*   `Suffix (example: dc=example,dc=com)`: `dc=example,dc=com`
+*   `Server FQDN (example: server.example.com)`: *Enter your actual server's FQDN here*. For instance, if your hostname is `rhel9-ds.local`, you might enter `rhel9-ds.local`.
+*   `Do you want to continue with these settings? [yes]`: `yes`
+
++
+The `dscreate` utility will now proceed to create the instance. You will see output indicating the creation of directories, database initialization, and service registration.
++
+----
+[output]
+Creating Directory Server instance 'myinstance'...
+  Instance 'myinstance' was created successfully.
+  The server was started successfully.
+----
+
+. **Verify the instance status**:
++
+Use the `dsctl` utility to check if the new instance is running.
++
+[source,bash]
+----
+dsctl status myinstance
+----
++
+[output]
+----
+Instance "myinstance" is running
+  PID: 12345
+  Listening on: myinstance.example.com:389 (LDAP), myinstance.example.com:636 (LDAPS)
+  Started: YYYY-MM-DD HH:MM:SS
+----
++
+The output should confirm that your instance is running and list the ports it's listening on.
+
+. **Verify LDAP connectivity and base DN using `ldapsearch`**:
++
+Perform a simple `ldapsearch` query to connect to the directory server and retrieve information about the base DN. This confirms that the server is responding to LDAP requests and that your suffix is correctly configured. Replace `_your_server_fqdn_` with the FQDN you provided during `dscreate`.
++
+[source,bash]
+----
+ldapsearch -x \
+  -H ldap://_your_server_fqdn_:389 \
+  -b "dc=example,dc=com" \
+  -D "cn=Directory Manager" \
+  -w "P@ssw0rd123" \
+  objectClass=*
+----
++
+[output]
+----
+# extended LDIF
+#
+# LDAPv3
+# base <dc=example,dc=com> with scope subtree
+# filter: objectClass=*
+# requesting: ALL
+#
+
+# example.com
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: example.com
+dc: example
+
+# search result
+search: 2
+result: 0 Success
+
+# numResponses: 2
+# numEntries: 1
+----
++
+If you see output similar to the above, it indicates successful connection and retrieval of the base DN entry, confirming your RHDS instance is fully operational.
+
+. **Explore instance files (Optional)**:
++
+Take a moment to look at the directories created by `dscreate`:
++
+*   Configuration: `/etc/dirsrv/slapd-myinstance/`
+*   Data: `/var/lib/dirsrv/slapd-myinstance/db/`
+*   Logs: `/var/log/dirsrv/slapd-myinstance/`
+
+You have successfully created and initialized a Red Hat Directory Server 13 instance using `dscreate`. This instance is now ready for further configuration and data management.

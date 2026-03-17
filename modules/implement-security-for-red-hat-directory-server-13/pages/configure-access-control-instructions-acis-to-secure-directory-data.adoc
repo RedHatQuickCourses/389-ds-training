@@ -1,0 +1,405 @@
+#  Configure Access Control Instructions (ACIs) to secure directory data.
+
+= Configure Access Control Instructions (ACIs) to Secure Directory Data
+
+Red Hat Directory Server (RHDS) provides robust security mechanisms, and among the most critical are Access Control Instructions (ACIs). ACIs are the primary way to define granular permissions, specifying who can access what data and perform which operations within your directory. Properly configured ACIs are essential for maintaining data confidentiality, integrity, and availability, ensuring that only authorized entities can interact with sensitive directory information.
+
+== Understanding Access Control Instructions (ACIs)
+
+At its core, an ACI is a set of rules that governs access to directory entries and attributes. It answers the fundamental questions: "Who can do what to which data?"
+
+ACIs are stored as attributes within the directory itself, typically on the entries they protect or on parent entries that define access for their subtree. When a client attempts to perform an operation (e.g., bind, search, read, modify, delete), RHDS evaluates the relevant ACIs to determine if the operation is permitted.
+
+=== Key Components of an ACI
+
+An ACI is defined using a specific syntax within the `aci` operational attribute. While complex in its full form, it can be broken down into three main parts:
+
+1.  *Bind Rules (Who):* These define the identity or group of identities attempting to access the directory. Common bind rules include:
+    *   `userdn="ldap:///uid=jsmith,ou=People,dc=example,dc=com"`: Matches a specific user by their distinguished name (DN).
+    *   `groupdn="ldap:///cn=Admins,ou=Groups,dc=example,dc=com"`: Matches members of a specific group.
+    *   `anonymous`: Matches unauthenticated users.
+    *   `self`: Matches the user whose entry is being accessed (useful for self-service).
+    *   `all`: Matches all users (authenticated or anonymous).
+    *   `dn.exact="cn=Directory Manager"`: Matches an exact DN.
+    *   `dn.regex="^uid=.*,ou=People,dc=example,dc=com$"`: Matches DNs using regular expressions.
+
+2.  *Target (What):* This specifies the directory entries or attributes the ACI applies to.
+    *   `target="ldap:///ou=People,dc=example,dc=com"`: Applies to a specific entry.
+    *   `target="ldap:///ou=People,dc=example,dc=com"` *with `targetscope`*: Applies to a subtree (e.g., `targetscope="subtree"`).
+    *   `targetattr="userPassword || employeeID"`: Applies to specific attributes. The `||` acts as an OR.
+    *   `targetfilter="(objectClass=inetOrgPerson)"`: Applies to entries matching a specific LDAP filter.
+
+3.  *Permissions (Actions):* These define the operations that are allowed or denied. Permissions can be `grant` (allow) or `deny`.
+    *   `read`: View attribute values.
+    *   `write`: Modify attribute values.
+    *   `add`: Add new entries or new attribute values to an existing entry.
+    *   `delete`: Delete entries or delete attribute values from an existing entry.
+    *   `search`: Perform search operations.
+    *   `compare`: Compare attribute values.
+    *   `export`: Export data (e.g., for replication).
+    *   `import`: Import data (e.g., for replication).
+
+=== ACI Evaluation Logic
+
+Red Hat Directory Server evaluates ACIs from the most specific to the most general. Within the same scope, `deny` rules always take precedence over `grant` rules. If an operation is explicitly denied by any ACI, it is denied, even if another ACI explicitly grants it. If no ACI explicitly denies an operation, and at least one ACI explicitly grants it, the operation is permitted. If no ACI applies or grants the operation, it is implicitly denied.
+
+The general processing order is:
+
+1.  Specific `deny` rules are checked first.
+2.  Specific `grant` rules are checked next.
+3.  General `deny` rules.
+4.  General `grant` rules.
+
+This "deny-wins" logic is critical for security, ensuring that restrictive policies are enforced even if broader policies might otherwise permit access.
+
+=== The `aci` Attribute
+
+ACIs are stored in the `aci` operational attribute. This attribute is *multivalued*, meaning an entry can have multiple `aci` values, each defining a separate access rule. Each `aci` value starts with the keyword `(version 3.0;` followed by the bind rule, target, and permissions.
+
+Example `aci` syntax:
+```
+(targetattr="userPassword")(version 3.0; acl "Allow self-service password change"; allow (write) userdn="ldap:///self";)
+```
+In this example:
+*   `(targetattr="userPassword")`: The target is the `userPassword` attribute.
+*   `(version 3.0;`: Standard ACI version.
+*   `acl "Allow self-service password change";`: An optional descriptive name for the ACI.
+*   `allow (write) userdn="ldap:///self";`: The permission granted is `write` for the `userPassword` attribute, and the bind rule is `self` (meaning the user modifying their *own* entry).
+
+== Managing ACIs with LDIF
+
+ACIs are typically managed by adding or modifying the `aci` attribute on appropriate directory entries using LDIF (LDAP Data Interchange Format) files and the `ldapmodify` command.
+
+Let's assume you have an RHDS instance running, and you're logged in as a user with sufficient privileges (e.g., `cn=Directory Manager`).
+
+=== Hands-on Lab: Configure ACIs to Secure User Data
+
+In this lab, you will configure ACIs to manage access to user data within an `ou=People` branch.
+
+*Prerequisites:*
+*   A running Red Hat Directory Server 13 instance with a configured suffix (e.g., `dc=example,dc=com`).
+*   The `ldap-utils` package installed (for `ldapadd`, `ldapmodify`, `ldapsearch`).
+*   Directory Manager credentials. Replace `"your_directory_manager_password"` with your actual Directory Manager password in all commands.
+
+*Scenario:*
+You need to create an organizational unit for users and then apply ACIs to:
+1.  Allow all authenticated users to *read* most attributes of other users in `ou=People`, but deny read access to sensitive attributes like `userPassword` and `shadow*`.
+2.  Allow users to *modify* their *own* `description` and `telephoneNumber` attributes (self-service).
+3.  Allow members of a `Helpdesk` group to *reset* user passwords (modify `userPassword` for others).
+
+==== Step 1: Create the Base OU and Sample User Entries
+
+First, let's set up the basic directory structure and some users.
+
+.Create `ou=People` and a `Helpdesk` group:
+[source,bash]
+----
+cat << EOF > initial_setup.ldif
+dn: ou=People,dc=example,dc=com
+objectClass: organizationalUnit
+objectClass: top
+ou: People
+
+dn: cn=Helpdesk,ou=Groups,dc=example,dc=com
+objectClass: groupOfUniqueNames
+objectClass: top
+cn: Helpdesk
+uniqueMember: uid=jdoe,ou=People,dc=example,dc=com
+uniqueMember: uid=kscott,ou=People,dc=example,dc=com
+
+dn: uid=jdoe,ou=People,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: top
+uid: jdoe
+cn: John Doe
+sn: Doe
+givenName: John
+displayName: John Doe
+mail: jdoe@example.com
+userPassword: password
+telephoneNumber: 555-1001
+description: RHDS Administrator
+
+dn: uid=kscott,ou=People,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: top
+uid: kscott
+cn: Kyle Scott
+sn: Scott
+givenName: Kyle
+displayName: Kyle Scott
+mail: kscott@example.com
+userPassword: password
+telephoneNumber: 555-1002
+description: Helpdesk Specialist
+
+dn: uid=msmith,ou=People,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: top
+uid: msmith
+cn: Mary Smith
+sn: Smith
+givenName: Mary
+displayName: Mary Smith
+mail: msmith@example.com
+userPassword: password
+telephoneNumber: 555-1003
+description: Standard User
+EOF
+
+ldapadd -x -D "cn=Directory Manager" -w "your_directory_manager_password" -f initial_setup.ldif
+----
+*Expected Output (example):*
+----
+adding new entry "ou=People,dc=example,dc=com"
+adding new entry "cn=Helpdesk,ou=Groups,dc=example,dc=com"
+adding new entry "uid=jdoe,ou=People,dc=example,dc=com"
+adding new entry "uid=kscott,ou=People,dc=example,dc=com"
+adding new entry "uid=msmith,ou=People,dc=example,dc=com"
+----
+
+==== Step 2: Implement Global Read Access with Restrictions
+
+We will add an ACI to `ou=People,dc=example,dc=com` that applies to all entries within its subtree.
+
+.Create ACI to allow authenticated users to read most attributes but deny sensitive ones:
+[source,bash]
+----
+cat << EOF > aci_read_access.ldif
+dn: ou=People,dc=example,dc=com
+changetype: modify
+add: aci
+aci: (target="ldap:///ou=People,dc=example,dc=com")(targetscope="subtree")(targetattr="*")(version 3.0; acl "Allow authenticated users to read all attributes except sensitive ones"; allow (read,search,compare) userdn="ldap:///all";)
+aci: (target="ldap:///ou=People,dc=example,dc=com")(targetscope="subtree")(targetattr="userPassword || shadowLastChange || shadowMax || shadowMin || shadowWarning || shadowInactive || shadowExpire || shadowFlag")(version 3.0; acl "Deny authenticated users read access to sensitive attributes"; deny (read,search,compare) userdn="ldap:///all";)
+EOF
+
+ldapmodify -x -D "cn=Directory Manager" -w "your_directory_manager_password" -f aci_read_access.ldif
+----
+*Explanation of ACIs:*
+*   The first ACI (`allow`) grants `read`, `search`, and `compare` permissions to `all` users for `all` attributes (`targetattr="*"`) within the `ou=People` subtree.
+*   The second ACI (`deny`) explicitly `deny`s `read`, `search`, and `compare` permissions to `all` users for sensitive attributes (`userPassword`, `shadow*`). Due to the "deny-wins" logic, the denial for sensitive attributes will override the general grant.
+
+.Verify Read Access:
+Try to read `msmith`'s entry as `jdoe`.
+
+[source,bash]
+----
+# As jdoe, try to read msmith's entry including userPassword (should fail for userPassword)
+ldapsearch -x -D "uid=jdoe,ou=People,dc=example,dc=com" -w password \
+  -b "uid=msmith,ou=People,dc=example,dc=com" "(objectClass=*)" \
+  userPassword telephoneNumber description
+
+# As jdoe, try to read msmith's entry (should succeed for allowed attributes)
+ldapsearch -x -D "uid=jdoe,ou=People,dc=example,dc=com" -w password \
+  -b "uid=msmith,ou=People,dc=example,dc=com" "(objectClass=*)" \
+  telephoneNumber description
+----
+*Expected Output for first `ldapsearch` (showing partial data and no `userPassword`):*
+----
+# extended LDIF
+#
+# LDAPv3
+# base <uid=msmith,ou=People,dc=example,dc=com> with scope subtree
+# filter: (objectClass=*)
+# requesting: userPassword telephoneNumber description
+#
+
+dn: uid=msmith,ou=People,dc=example,dc=com
+telephoneNumber: 555-1003
+description: Standard User
+
+# search result
+search: 2
+result: 0 Success
+
+# numResponses: 2
+# numEntries: 1
+----
+Notice `userPassword` is not returned, demonstrating the ACI is working.
+
+==== Step 3: Implement Self-Service Modify Access
+
+Now, add an ACI to `ou=People` that allows users to modify their *own* `description` and `telephoneNumber`.
+
+.Create ACI for self-service modification:
+[source,bash]
+----
+cat << EOF > aci_self_service.ldif
+dn: ou=People,dc=example,dc=com
+changetype: modify
+add: aci
+aci: (target="ldap:///ou=People,dc=example,dc=com")(targetscope="subtree")(targetattr="description || telephoneNumber")(version 3.0; acl "Allow self-service modify for description and telephoneNumber"; allow (write) userdn="ldap:///self";)
+EOF
+
+ldapmodify -x -D "cn=Directory Manager" -w "your_directory_manager_password" -f aci_self_service.ldif
+----
+
+.Verify Self-Service Modify:
+Try to modify `msmith`'s `description` as `msmith`.
+
+[source,bash]
+----
+cat << EOF > msmith_modify.ldif
+dn: uid=msmith,ou=People,dc=example,dc=com
+changetype: modify
+replace: description
+description: Standard User - Updated by Self-Service
+EOF
+
+ldapmodify -x -D "uid=msmith,ou=People,dc=example,dc=com" -w password -f msmith_modify.ldif
+
+# Verify the change
+ldapsearch -x -D "uid=msmith,ou=People,dc=example,dc=com" -w password \
+  -b "uid=msmith,ou=People,dc=example,dc=com" "(objectClass=*)" description
+----
+*Expected Output for `ldapmodify` (success):*
+----
+modifying entry "uid=msmith,ou=People,dc=example,dc=com"
+----
+*Expected Output for `ldapsearch` (showing updated description):*
+----
+# extended LDIF
+#
+# LDAPv3
+# base <uid=msmith,ou=People,dc=example,dc=com> with scope subtree
+# filter: (objectClass=*)
+# requesting: description
+#
+
+dn: uid=msmith,ou=People,dc=example,dc=com
+description: Standard User - Updated by Self-Service
+
+# search result
+search: 2
+result: 0 Success
+
+# numResponses: 2
+# numEntries: 1
+----
+
+Try to modify `jdoe`'s `description` as `msmith` (should fail).
+[source,bash]
+----
+cat << EOF > jdoe_modify_by_msmith.ldif
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: modify
+replace: description
+description: John Doe - Modified by Mary (Unauthorized)
+EOF
+
+ldapmodify -x -D "uid=msmith,ou=People,dc=example,dc=com" -w password -f jdoe_modify_by_msmith.ldif
+----
+*Expected Output for `ldapmodify` (failure):*
+----
+modifying entry "uid=jdoe,ou=People,dc=example,dc=com"
+ldap_modify: Insufficient access (50)
+----
+This confirms the `self` bind rule is working correctly.
+
+==== Step 4: Implement Helpdesk Password Reset ACI
+
+Now, add an ACI that allows members of the `cn=Helpdesk` group to modify the `userPassword` attribute for *other* users in `ou=People`. This ACI needs to be carefully crafted to avoid self-service password changes for helpdesk members via this ACI (which should be covered by other ACIs or specific `deny` rules if needed). For simplicity, this ACI targets *other* users.
+
+.Create ACI for Helpdesk password reset:
+[source,bash]
+----
+cat << EOF > aci_helpdesk_password_reset.ldif
+dn: ou=People,dc=example,dc=com
+changetype: modify
+add: aci
+aci: (target="ldap:///ou=People,dc=example,dc=com")(targetscope="subtree")(targetfilter="(!(userdn=\"ldap:///self\"))")(targetattr="userPassword")(version 3.0; acl "Allow Helpdesk to reset user passwords"; allow (write) groupdn="ldap:///cn=Helpdesk,ou=Groups,dc=example,dc=com";)
+EOF
+
+ldapmodify -x -D "cn=Directory Manager" -w "your_directory_manager_password" -f aci_helpdesk_password_reset.ldif
+----
+*Explanation of ACI:*
+*   `targetfilter="(!(userdn=\"ldap:///self\"))"`: This is crucial. It ensures that the ACI *does not* apply when a Helpdesk member tries to modify *their own* `userPassword`. This forces Helpdesk members to follow any general password change policies, rather than using this specific "reset" capability on themselves.
+
+.Verify Helpdesk Password Reset:
+Try to reset `msmith`'s password as `kscott` (who is a Helpdesk member).
+
+[source,bash]
+----
+cat << EOF > msmith_password_reset_by_kscott.ldif
+dn: uid=msmith,ou=People,dc=example,dc=com
+changetype: modify
+replace: userPassword
+userPassword: NewPassword1!
+EOF
+
+ldapmodify -x -D "uid=kscott,ou=People,dc=example,dc=com" -w password -f msmith_password_reset_by_kscott.ldif
+
+# Verify the password change by binding as msmith with the new password
+ldapbind -x -D "uid=msmith,ou=People,dc=example,dc=com" -w NewPassword1!
+----
+*Expected Output for `ldapmodify` (success):*
+----
+modifying entry "uid=msmith,ou=People,dc=example,dc=com"
+----
+*Expected Output for `ldapbind` (success):*
+----
+bind successful
+----
+
+Now, try to reset `jdoe`'s password as `msmith` (who is *not* a Helpdesk member).
+[source,bash]
+----
+cat << EOF > jdoe_password_reset_by_msmith.ldif
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: modify
+replace: userPassword
+userPassword: AttemptedReset1!
+EOF
+
+ldapmodify -x -D "uid=msmith,ou=People,dc=example,dc=com" -w "NewPassword1!" -f jdoe_password_reset_by_msmith.ldif
+----
+*Expected Output for `ldapmodify` (failure):*
+----
+modifying entry "uid=jdoe,ou=People,dc=example,dc=com"
+ldap_modify: Insufficient access (50)
+----
+This confirms that only members of the `Helpdesk` group have this permission.
+
+==== Step 5: Clean Up (Optional)
+
+To remove the test data and ACIs:
+
+[source,bash]
+----
+cat << EOF > cleanup.ldif
+dn: uid=msmith,ou=People,dc=example,dc=com
+changetype: delete
+
+dn: uid=kscott,ou=People,dc=example,dc=com
+changetype: delete
+
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: delete
+
+dn: cn=Helpdesk,ou=Groups,dc=example,dc=com
+changetype: delete
+
+dn: ou=People,dc=example,dc=com
+changetype: delete
+EOF
+
+ldapmodify -x -D "cn=Directory Manager" -w "your_directory_manager_password" -f cleanup.ldif
+----
+
+== Best Practices and Troubleshooting ACIs
+
+*   *Principle of Least Privilege:* Always grant only the minimum necessary permissions. Start with no access and explicitly grant what is needed.
+*   *Test Thoroughly:* After implementing or modifying ACIs, always test them with the credentials of various users and groups to ensure they behave as expected. Use `ldapsearch` and `ldapmodify` from different user contexts.
+*   *Order Matters (Deny Wins):* Remember that `deny` rules always take precedence over `grant` rules. If an operation is denied by any rule, it will not be allowed.
+*   *ACI Placement:* Place ACIs as high up in the DIT (Directory Information Tree) as possible if they apply to a broad subtree. This reduces the number of ACIs RHDS has to evaluate. However, for very specific rules, placing them directly on the target entry or a closer parent might be clearer.
+*   *Naming ACIs:* Use the `acl "Description";` syntax to give your ACIs meaningful names. This greatly helps with documentation and troubleshooting.
+*   *Avoid Overlapping or Redundant ACIs:* While RHDS handles evaluation, a clean and concise set of ACIs is easier to manage and less prone to errors.
+*   *Troubleshooting `Insufficient Access` (50) Errors:*
+    *   **Check ACI Syntax:** Ensure there are no typos or formatting issues in the `aci` attribute's value. Even a missing semicolon or misplaced quote can invalidate an ACI.
+    *   **Verify DNs and Group Memberships:** Confirm that the `userdn` and `groupdn` in your ACIs match the actual DNs of users/groups and that users are indeed members of the specified groups.
+    *   **ACI Evaluation Order:** Step through the ACI evaluation logic. Is there a `deny` rule that is overriding your `grant` rule? This is a very common cause of unexpected access denials.
+    *   **Directory Server Logs:** RHDS logs (e.g., `access` logs and `errors` logs, typically found under `/var/log/dirsrv/slapd-instance_name/`) can sometimes provide clues regarding ACI evaluation failures, especially with debugging enabled.
+    *   **Test with `Directory Manager`:** If `Directory Manager` can perform an operation but a regular user cannot, it strongly indicates an ACI issue, as `Directory Manager` bypasses most ACIs.
+*   *Performance Impact:* While powerful, a very large number of complex ACIs, especially those with intricate `targetfilter` or `targetattr` rules, can introduce a slight overhead. Design your ACIs efficiently.
+
+By understanding the components, evaluation logic, and best practices for ACIs, you can effectively secure your Red Hat Directory Server environment, protecting sensitive information and controlling access with precision.

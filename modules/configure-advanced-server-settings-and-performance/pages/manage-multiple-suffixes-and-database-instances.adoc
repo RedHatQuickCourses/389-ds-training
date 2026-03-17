@@ -1,0 +1,243 @@
+#  Manage multiple suffixes and database instances.
+
+ifndef::ROOT_ATTRIBUTES[]
+:encoding: utf-8
+:lang: en
+:author: Your Name
+:email: your.email@example.com
+:revnumber: 1.0
+:revdate: 2023-10-27
+:sectnums:
+:sectanchors:
+:toc: macro
+:toc-title: Table of Contents
+:experimental:
+endif::[]
+
+= Manage Multiple Suffixes and Database Instances
+
+toc::[]
+
+Directory Server instances often need to manage diverse sets of data, sometimes for different organizational units, applications, or security domains. Red Hat Directory Server (RHDS) provides robust mechanisms to handle this through the concepts of *suffixes* and *database instances* (also known as *backends*). This section explores how to effectively manage these components to create a flexible and performant directory infrastructure.
+
+== Understanding Suffixes in RHDS
+
+[[section-suffixes-overview]]
+A directory *suffix* represents a distinct naming context or a top-level entry point within the LDAP Directory Information Tree (DIT). It is the base Distinguished Name (DN) under which a particular subtree of directory entries resides.
+
+For example:
+
+*   `dc=example,dc=com` could be a suffix for the main corporate directory.
+*   `dc=hr,dc=example,dc=com` could be a suffix for Human Resources specific data.
+*   `ou=applications,dc=example,dc=com` could be a suffix for application-specific configurations.
+
+Each suffix acts as an independent logical division of your directory data.
+
+=== Benefits of Multiple Suffixes
+
+Using multiple suffixes offers several advantages:
+
+*   **Organizational Separation:** Allows different departments or groups to have their own dedicated space within the directory, simplifying administration and access control.
+*   **Data Isolation:** Different types of data (e.g., users, groups, applications, devices) can be stored under distinct suffixes, making it easier to manage schema, indexes, and access policies relevant to each data type.
+*   **Performance Optimization:** By separating large datasets into different suffixes, you can distribute data across multiple physical database instances, potentially improving search performance and reducing contention.
+*   **Replication Flexibility:** You can configure replication agreements independently for each suffix, allowing fine-grained control over which parts of the directory are replicated to which servers.
+*   **Backup and Restore:** Managing backups and restores can be more granular when data is logically separated by suffix.
+
+== Understanding Database Instances (Backends)
+
+[[section-database-instances-overview]]
+In RHDS, a *database instance*, often referred to as a *backend*, is the physical storage mechanism for directory data. Each suffix must be mapped to a database instance that stores its entries. While a single database instance can store multiple suffixes, it is common practice, especially for performance or logical separation, to map distinct suffixes to distinct database instances.
+
+RHDS uses several types of backends, but the primary backend for storing user-defined data is the `userroot` backend. Other special-purpose backends include:
+
+*   `config`: Stores the server's configuration entries.
+*   `schema`: Stores the directory server's schema definition.
+*   `chain`: Used for chaining and referrals.
+
+When we talk about managing multiple database instances for user data, we are typically referring to creating additional `userroot` backends.
+
+=== Benefits of Multiple Database Instances
+
+*   **Performance:** Spreading data across multiple database instances can improve performance, especially when dealing with very large directories or high read/write loads. Different database instances can leverage different underlying storage characteristics.
+*   **Resource Management:** You can configure specific settings (like caching, indexing strategies) for each database instance to optimize it for the type of data it stores.
+*   **Maintenance:** Maintenance operations like database compacting or offline indexing can be performed on individual database instances, potentially minimizing impact on other parts of the directory.
+*   **Troubleshooting:** Isolating data issues to a specific database instance can simplify troubleshooting.
+
+== Managing Suffixes and Database Instances
+
+To manage suffixes and database instances, you will primarily use the `dsconf` command-line utility for server configuration and `ldapadd`/`ldapmodify` for adding initial entries.
+
+[[lab-manage-multiple-suffixes]]
+=== Hands-on Lab: Deploy and Configure a New Suffix with a Dedicated Database Instance
+
+In this lab, you will learn how to create a new `userroot` database instance and a new suffix, and then map them together. We will create a new suffix `dc=hr,dc=example,dc=com` to store Human Resources related entries, separate from the default `dc=example,dc=com` suffix.
+
+==== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance.
+*   Administrative access (e.g., `cn=Directory Manager`).
+*   Familiarity with basic `ldapadd` and `ldapsearch` commands.
+
+==== Step 1: Connect to Your RHDS Server
+
+Ensure you can access your RHDS server, either directly or via SSH.
+
+[source,bash,subs="attributes+"]
+----
+# Replace 'directory.example.com' with your RHDS server's hostname or IP
+ssh root@directory.example.com
+----
+
+==== Step 2: Identify Existing Suffixes and Backends
+
+First, let's inspect the current configuration to see what suffixes and backends are already present.
+
+.List configured suffixes
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost suffix list
+----
+You should see output similar to:
+```
+dc=example,dc=com
+```
+
+.List configured backends
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost backend list
+----
+You should see backends like:
+```
+userroot
+config
+schema
+```
+The `userroot` backend typically stores the default `dc=example,dc=com` suffix.
+
+==== Step 3: Create a New `userroot` Database Instance for HR Data
+
+We'll create a new backend named `hr_backend`. This backend will be a `userroot` type.
+
+.Create the new backend
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost backend create --be-name hr_backend --be-type userroot
+----
+You should see output indicating success.
+
+==== Step 4: Create the New Suffix and Map it to the `hr_backend`
+
+Now, we'll create the `dc=hr,dc=example,dc=com` suffix and specify that it should use the `hr_backend` we just created.
+
+.Create the new suffix and map it
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost suffix create --suffix dc=hr,dc=example,dc=com --be-name hr_backend
+----
+Verify the new suffix is listed:
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost suffix list
+----
+You should now see both `dc=example,dc=com` and `dc=hr,dc=example,dc=com`.
+
+TIP: When creating a suffix, if you omit the `--be-name` option, RHDS will attempt to automatically map it to an existing `userroot` backend or create a new one if necessary. Explicitly mapping is recommended for clarity and control.
+
+==== Step 5: Add an Initial Entry to the New Suffix
+
+For the new suffix to be functional, it needs to have a base entry. This is typically an entry corresponding to the suffix DN itself, often of the `organizationalUnit` or `dcObject` object class.
+
+.Create an LDIF file for the base HR entry
+[source,ldif]
+.hr_base.ldif
+----
+dn: dc=hr,dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Human Resources Division
+dc: hr
+description: Top-level entry for Human Resources data
+----
+
+.Add the base entry using `ldapadd`
+[source,bash]
+----
+ldapadd -x -D "cn=Directory Manager" -w "your_directory_manager_password" -f hr_base.ldif
+----
+Replace `"your_directory_manager_password"` with the actual password for `cn=Directory Manager`.
+
+==== Step 6: Verify the New Suffix and Data
+
+Now, let's search the new suffix to ensure it's functional and the base entry exists.
+
+.Search the new HR suffix
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -w "your_directory_manager_password" -b "dc=hr,dc=example,dc=com" "(objectclass=*)"
+----
+You should see the `dc=hr,dc=example,dc=com` entry returned, along with its attributes.
+
+==== Step 7: Add a User Entry to the New Suffix
+
+Let's add a sample user to the new HR suffix to demonstrate data separation.
+
+.Create an LDIF file for a sample HR user
+[source,ldif]
+.hr_user.ldif
+----
+dn: uid=janedoe,dc=hr,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: janedoe
+cn: Jane Doe
+sn: Doe
+givenName: Jane
+mail: jane.doe@example.com
+userPassword: password
+----
+
+.Add the HR user entry
+[source,bash]
+----
+ldapadd -x -D "cn=Directory Manager" -w "your_directory_manager_password" -f hr_user.ldif
+----
+
+.Verify the HR user entry
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -w "your_directory_manager_password" -b "dc=hr,dc=example,dc=com" "uid=janedoe"
+----
+You should see the entry for `Jane Doe`.
+
+NOTE: This user (`uid=janedoe,dc=hr,dc=example,dc=com`) is completely separate from any user in `dc=example,dc=com` and is stored in its own dedicated database backend.
+
+==== Step 8: (Optional) Remove the New Suffix and Backend
+
+If you wish to clean up the resources created during this lab, you can remove the suffix and then the backend.
+
+.Remove the suffix
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost suffix delete --suffix dc=hr,dc=example,dc=com
+----
+
+.Remove the backend (ensure no other suffixes are mapped to it first!)
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" ldap://localhost backend delete --be-name hr_backend
+----
+IMPORTANT: Deleting a backend will permanently remove all data associated with it. Exercise extreme caution. Ensure the backend is not mapped to any other active suffixes before deletion.
+
+== Advanced Considerations and Best Practices
+
+*   **Indexing:** Each database instance can have its own set of indexes configured. Optimize indexing for each backend based on the search patterns expected for its data.
+*   **Access Control Instructions (ACIs):** ACIs can be defined at the suffix level, allowing granular control over who can access or modify data within a specific suffix. This is a key advantage of separating data into multiple suffixes.
+*   **Replication:** When configuring replication, you specify which suffixes are part of a replication agreement. This allows you to replicate only specific parts of your directory to certain consumers.
+*   **Capacity Planning:** Consider the size and growth rate of data when deciding whether to create separate database instances. Larger, frequently accessed data might benefit from its own backend.
+*   **Server Restart:** After making significant changes to suffixes or backends (especially adding new ones), a server restart might be required for the changes to take full effect, although `dsconf` often handles this implicitly for simple operations. When in doubt, restarting the instance using `dsctl restart <instance_name>` is a safe practice.
+
+By effectively utilizing multiple suffixes and database instances, you can design a highly scalable, manageable, and secure Red Hat Directory Server deployment tailored to your organization's specific needs.

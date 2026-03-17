@@ -1,0 +1,208 @@
+#  Understand core LDAP security concepts including authentication and authorization.
+
+ifndef::root_attributes[]
+:idprefix:
+:idseparator:
+:page-layout:
+:sectanchors:
+:sectnums:
+:toc: macro
+:toclevels: 4
+:imagesdir: ../assets/images
+:icons: font
+:source-highlighter: highlight.js
+endif::[]
+
+= Understand LDAP Security: Authentication and Authorization
+
+This module delves into the foundational security concepts within LDAP, specifically focusing on how directory servers verify the identity of clients (authentication) and determine what actions those clients are permitted to perform (authorization). A robust understanding of these principles is crucial for building secure and compliant Red Hat Directory Server (RHDS) deployments.
+
+toc::[]
+
+[[ldap-security-overview]]
+== Overview of LDAP Security
+
+LDAP (Lightweight Directory Access Protocol) is fundamentally a client-server protocol used for accessing and maintaining distributed directory information services. Given that directory servers often store sensitive user data, application configurations, and access policies, securing access to this information is paramount.
+
+LDAP security primarily revolves around two core pillars:
+
+1.  *Authentication*: The process by which an LDAP client proves its identity to the LDAP server. Without successful authentication, the server cannot trust the client's identity.
+2.  *Authorization*: Once a client's identity is verified through authentication, authorization determines what operations (read, write, modify, delete) that specific authenticated client is allowed to perform on which parts of the directory tree.
+
+These two concepts work hand-in-hand. Authentication establishes *who you are*, and authorization dictates *what you can do*.
+
+[[ldap-authentication]]
+== Authentication in LDAP
+
+Authentication is the initial step in securing access to an LDAP directory. It ensures that only legitimate users or applications can interact with the directory server. LDAP supports various authentication methods, each offering different levels of security and complexity.
+
+=== The `bind` Operation
+
+All LDAP authentication begins with a `bind` operation. A client sends a `bind` request to the server, providing credentials. The server then attempts to verify these credentials against its own security database or an external source.
+
+The `bind` operation is represented by the `ldapbind` command-line utility.
+
+[source,bash]
+----
+ldapbind -h ldap.example.com -p 389 -D "cn=Directory Manager" -w "password"
+----
+In this example:
+*   `-h`: Specifies the hostname or IP address of the LDAP server.
+*   `-p`: Specifies the port (389 for standard LDAP, 636 for LDAPS).
+*   `-D`: Specifies the *Bind DN* (Distinguished Name) of the user attempting to authenticate. This is the identity being presented.
+*   `-w`: Specifies the password for the Bind DN.
+
+Upon a successful `bind`, the client is authenticated and can then proceed with other LDAP operations (search, add, modify, delete) within the limits of its authorization.
+
+=== Types of LDAP Authentication
+
+LDAP generally supports two broad categories of authentication:
+
+1.  *Simple Authentication*
+2.  *SASL (Simple Authentication and Security Layer) Authentication*
+
+==== Simple Authentication
+
+Simple authentication methods are straightforward but vary in their security implications.
+
+*   *Anonymous Bind*:
+    *   The client provides no credentials (empty Bind DN and password).
+    *   Effectively, this means "anyone" can access the directory.
+    *   Anonymous access is typically granted very limited permissions, often only for reading public information (e.g., searching for user names or public keys).
+    *   While convenient for public directories, it's generally *discouraged* for directories containing sensitive information.
+    *   *Example*:
+        [source,bash]
+        ----
+        ldapsearch -h ldap.example.com -p 389 -b "dc=example,dc=com" -x "(objectClass=*)"
+        ----
+        The `-x` flag explicitly requests simple authentication (and by default, anonymous if no `-D` is provided).
+
+*   *Unauthenticated (or Weak) Bind*:
+    *   The client provides a Bind DN but no password (or an incorrect one that the server doesn't validate).
+    *   This is not a true authentication method and should *never* be used in production. It implies a server misconfiguration where it allows access without credential verification. Red Hat Directory Server does not typically allow unauthenticated binds by default for any meaningful access.
+
+*   *Simple Password Bind*:
+    *   The most common form of simple authentication.
+    *   The client sends a Bind DN and a password in clear text (or hashed, depending on the server configuration and connection security).
+    *   If the server finds a matching user entry for the Bind DN and the provided password matches the stored password (after hashing/salting, if applicable), authentication succeeds.
+    *   *Security Consideration*: Sending passwords in clear text over an unencrypted connection (port 389) is a major security risk, as they can be intercepted. Therefore, simple password binds *must* always be performed over a secure, encrypted connection (e.g., using TLS/SSL on port 636 or STARTTLS on port 389).
+
+==== SASL (Simple Authentication and Security Layer) Authentication
+
+SASL is a framework for authentication and data security that decouples the authentication mechanism from the application protocol (LDAP, SMTP, IMAP, etc.). It allows for more robust and flexible authentication methods than simple password binds.
+
+Instead of sending passwords directly, SASL mechanisms often involve a challenge-response protocol, where the client and server exchange information to prove identity without transmitting the actual password in a vulnerable form.
+
+Common SASL mechanisms supported by RHDS include:
+
+*   *GSSAPI (Generic Security Service Application Programming Interface)*:
+    *   Often used with Kerberos, providing strong, integrated security for enterprise environments.
+    *   Allows clients to authenticate using existing Kerberos tickets, providing single sign-on capabilities.
+    *   Complex to set up but highly secure and efficient for large-scale deployments.
+    *   *Example*:
+        [source,bash]
+        ----
+        ldapbind -h ldap.example.com -p 389 -I -Y GSSAPI
+        ----
+        The `-I` flag requests an interactive bind, and `-Y GSSAPI` specifies the SASL mechanism.
+
+*   *EXTERNAL*:
+    *   Authenticates using credentials established "externally" to the LDAP protocol, typically through a client-side X.509 certificate presented during a TLS handshake.
+    *   The client establishes a secure TLS connection, and the server uses the client certificate provided during that handshake to authenticate the client. The Bind DN is then typically derived from the certificate's subject.
+    *   Provides strong authentication based on PKI.
+    *   *Example*: (Requires an established TLS connection with a client certificate)
+        [source,bash]
+        ----
+        ldapbind -h ldap.example.com -p 636 --clientcert /path/to/client.pem --clientkey /path/to/client.key -Y EXTERNAL
+        ----
+
+*   *DIGEST-MD5*:
+    *   A challenge-response mechanism that uses MD5 hashing to protect passwords from being transmitted in clear text.
+    *   It provides integrity checking and mutual authentication (both client and server authenticate each other).
+    *   Still relies on password-based authentication, but in a more secure manner than simple binds over an unencrypted channel.
+
+*   *PLAIN*:
+    *   A SASL mechanism that is essentially equivalent to a simple password bind over a secure channel.
+    *   It sends the Bind DN and password in clear text *after* the connection has been secured by TLS/SSL.
+    *   If the connection is not secured, it's as vulnerable as a simple bind.
+
+SASL provides significant advantages in terms of security and integration with existing enterprise authentication systems, making it the preferred choice for many modern deployments.
+
+[[ldap-authorization]]
+== Authorization in LDAP
+
+Once an LDAP client is authenticated, the next step is authorization: determining what actions that authenticated identity is allowed to perform on the directory data. In Red Hat Directory Server (and most other LDAP servers), authorization is primarily managed through *Access Control Instructions* (ACIs).
+
+ACIs are rules stored within the directory itself that define who can do what to which entries and attributes. They are a powerful and flexible mechanism for implementing granular security policies.
+
+=== Structure of an ACI
+
+An ACI is essentially a permission statement that typically includes:
+
+1.  *Target*: The entries or attributes to which the ACI applies. This specifies the scope of the rule.
+2.  *Bind Rule (`binddn`) or User/Group (`userdn`, `groupdn`)*: The identity (or group of identities) that the ACI grants or denies permissions to.
+3.  *Permissions (`rights`)*: The specific actions (read, write, add, delete, search, compare, selfwrite) that are allowed or denied.
+4.  *Binding Method (`bindmethod`)*: Optionally specifies how the client must have authenticated (e.g., `strong` for SASL or TLS-encrypted simple bind, `simple` for any simple bind).
+
+ACIs are typically stored in the `aci` operational attribute within directory entries or in configuration entries (`cn=config`).
+
+==== Example ACI Syntax (Conceptual)
+
+While the exact syntax can be complex, a simplified conceptual view of an ACI might look like this:
+
+[source,text]
+----
+(targetattr="userPassword")(target="ldap:///uid=*,ou=People,dc=example,dc=com")
+(version 3.0; acl "Allow self-modification of password";
+allow (write) userdn="ldap:///self";)
+----
+
+Let's break down the components of a conceptual ACI:
+
+*   `(targetattr="userPassword")`: This ACI targets the `userPassword` attribute.
+*   `(target="ldap:///uid=*,ou=People,dc=example,dc=com")`: This ACI applies to any entry under `ou=People,dc=example,dc=com` that has a `uid` attribute.
+*   `(version 3.0; acl "Allow self-modification of password"; ...)`: This is the descriptive part of the ACI.
+*   `allow (write) userdn="ldap:///self";`: This is the core permission. It grants `write` permission to the `userPassword` attribute for `self`. `self` is a special keyword meaning the authenticated user can modify their own entry.
+
+=== How ACIs Work and Are Evaluated
+
+When an authenticated client attempts an operation on the directory, the RHDS server evaluates all relevant ACIs to determine if the operation is permitted.
+
+Key principles of ACI evaluation:
+
+*   *Order Matters (Sometimes)*: While ACIs don't have an explicit numerical order, the server applies a defined evaluation logic. Generally, `deny` rules take precedence over `allow` rules, and more specific rules often override more general ones.
+*   *Inheritance*: ACIs set on an entry can apply to its children (subentries) in the directory tree unless overridden by more specific ACIs on those children.
+*   *Granularity*: ACIs can be applied to entire subtrees, individual entries, specific attributes within an entry, or even specific values of an attribute.
+*   *Default Deny*: If no ACI explicitly grants permission for an operation, it is implicitly denied. This is a fundamental security best practice.
+
+=== Common ACI Scenarios
+
+*   *Granting read access to all users for public attributes*: Allow anonymous or authenticated users to read attributes like `cn`, `sn`, `mail` for all entries.
+*   *Allowing users to modify their own entries*: Users can change their `description` or `telephoneNumber`.
+*   *Restricting write access to sensitive attributes*: Only the Directory Manager or specific administrators can modify `userPassword` (except for `self` changes).
+*   *Delegating administrative tasks*: Allowing a specific group of helpdesk personnel to reset passwords for users in a particular organizational unit.
+
+Managing ACIs effectively is crucial for maintaining a secure and functional directory server. Misconfigured ACIs can lead to either security vulnerabilities (too much access) or operational issues (users/applications unable to perform necessary actions).
+
+[[relationship-auth-authz]]
+== Relationship Between Authentication and Authorization
+
+It's critical to understand that authentication *precedes* authorization.
+
+1.  A client first attempts to *authenticate* itself to the RHDS server (e.g., using a Bind DN and password).
+2.  If authentication is *successful*, the server identifies the client (e.g., as `uid=jdoe,ou=People,dc=example,dc=com`).
+3.  The server then uses this authenticated identity to evaluate the *authorization* rules (ACIs). It checks which ACIs apply to `uid=jdoe,ou=People,dc=example,dc=com` for the requested operation on the target data.
+4.  If the ACIs grant permission, the operation proceeds. If not, the operation is denied.
+
+Without successful authentication, authorization cannot even begin, as the server doesn't know *who* is making the request.
+
+[[summary-ldap-security]]
+== Summary
+
+Understanding LDAP authentication and authorization is fundamental to deploying and managing a secure Red Hat Directory Server.
+
+*   *Authentication* verifies a client's identity through methods like simple binds (anonymous, password) or more robust SASL mechanisms (GSSAPI, EXTERNAL, DIGEST-MD5).
+*   *Authorization* defines what actions an authenticated client can perform, primarily managed through granular Access Control Instructions (ACIs).
+*   These concepts lay the groundwork for subsequent security configurations, such as implementing TLS for secure communication and configuring specific ACIs for various use cases, which will be covered in detail in practical lab exercises.
+
+In the next sections, we will delve into practical implementations of these concepts, starting with securing the communication channel itself using TLS.

@@ -1,0 +1,267 @@
+#  Describe the core concepts of LDAP (entries, attributes, DNs, RDNs, object classes, schema).
+
+[[ldap-core-concepts]]
+= Core Concepts of LDAP
+
+Understanding LDAP is fundamental to working with Red Hat Directory Server. LDAP, or Lightweight Directory Access Protocol, provides a standardized way to access and maintain distributed directory information services. At its heart, LDAP organizes information hierarchically, much like a file system, but optimized for read performance.
+
+This section will demystify the core components that make up an LDAP directory, laying the groundwork for more advanced configurations and operations. Familiarity with these concepts is crucial for effective administration, configuration, and troubleshooting of RHDS.
+
+[[ldap-entries]]
+== Entries: The Fundamental Units of Information
+
+[[what-is-an-entry]]
+=== What is an Entry?
+
+An *entry* is the primary unit of information storage within an LDAP directory. Conceptually, you can think of an entry as a record or an object representing a real-world entity. These entities can range from users, groups, and organizations to physical devices like servers or printers, or even services.
+
+Key characteristics of an entry:
+
+*   **Composed of Attributes**: Each entry is a collection of *attributes* that describe the entity it represents. For example, a user entry might have attributes for `cn` (common name), `uid` (user ID), `mail` (email address), and `telephoneNumber`.
+*   **Hierarchical Structure**: Entries are organized in a hierarchical, tree-like structure known as the Directory Information Tree (DIT). This structure defines parent-child relationships, where an entry can contain other entries as its children. This allows for logical grouping and management of directory data.
+*   **Uniquely Identified**: Every entry within the DIT is uniquely identified by its *Distinguished Name (DN)*, which specifies its exact path from the root of the directory tree.
+
+[[example-entry]]
+=== Example Entry Structure
+
+Consider an entry representing a user, "John Doe":
+
+[source,text]
+----
+dn: uid=jdoe,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jdoe
+cn: John Doe
+sn: Doe
+givenName: John
+mail: jdoe@example.com
+telephoneNumber: +1 555 123 4567
+description: Marketing Department Employee
+----
+
+In this example, the entire block of text starting with `dn:` and ending before the next `dn:` (or end of file) constitutes a single LDAP entry.
+
+[[ldap-attributes]]
+== Attributes: Describing the Entry
+
+[[what-is-an-attribute]]
+=== What is an Attribute?
+
+An *attribute* is a specific piece of information that describes a characteristic of an entry. Attributes are the building blocks of an entry, providing the actual data stored in the directory.
+
+Key aspects of attributes:
+
+*   **Type and Value**: Each attribute consists of an *attribute type* (a name, like `cn` or `mail`) and one or more *attribute values* (the actual data, like "John Doe" or "jdoe@example.com").
+*   **Schema-Defined**: The behavior and characteristics of attributes are strictly defined by the directory's *schema*. The schema dictates:
+    *   The attribute's name and Object Identifier (OID).
+    *   Its *syntax* (data type), such as Directory String, Integer, Binary, Boolean, or Timestamp.
+    *   Whether it is *single-valued* (e.g., typically `uid`) or *multi-valued* (e.g., `objectClass`, `mail` if a user has multiple email addresses).
+    *   *Matching rules*, which define how values are compared during search operations (e.g., case-sensitive, numeric).
+*   **Mandatory vs. Optional**: Attributes can be classified as mandatory (MUST) or optional (MAY) for a given entry type, as defined by the *object classes* assigned to the entry.
+
+[[attribute-types-values]]
+=== Attribute Types and Values in an Entry
+
+Referring to our example user entry:
+
+[source,text]
+----
+dn: uid=jdoe,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jdoe
+cn: John Doe
+sn: Doe
+givenName: John
+mail: jdoe@example.com
+telephoneNumber: +1 555 123 4567
+description: Marketing Department Employee
+----
+
+*   `uid` is an attribute type, and `jdoe` is its value.
+*   `cn` is an attribute type, and `John Doe` is its value.
+*   `objectClass` is a multi-valued attribute type, with values like `top`, `person`, `organizationalPerson`, and `inetOrgPerson`.
+*   `description` is an optional attribute, and `Marketing Department Employee` is its value.
+
+[[ldap-dns-rdns]]
+== DNs and RDNs: Unique Identification and Hierarchy
+
+[[distinguished-name]]
+=== Distinguished Name (DN)
+
+A *Distinguished Name (DN)* is a globally unique identifier for an entry within the LDAP directory. It specifies the exact location of an entry in the Directory Information Tree (DIT), much like a full path specifies a file's location in a file system.
+
+Key aspects of DNs:
+
+*   **Absolute Path**: A DN provides the complete path from the entry to the root of the DIT.
+*   **Concatenated RDNs**: It is constructed by concatenating the *Relative Distinguished Name (RDN)* of the entry itself with the RDNs of all its parent entries, moving up the hierarchy.
+*   **Comma Separation**: Components of a DN are separated by commas (`,`).
+*   **Order**: The most specific component (the entry's own RDN) appears first on the left, and components become progressively less specific as you move to the right (towards the root).
+
+[[example-dn]]
+=== Example DN Breakdown
+
+For the user "John Doe" with the DN `uid=jdoe,ou=users,dc=example,dc=com`:
+
+*   `uid=jdoe`: This is the RDN for the specific user entry.
+*   `ou=users`: This is the RDN of its direct parent entry, an organizational unit named "users."
+*   `dc=example`: This is the RDN of its grandparent entry, a domain component named "example."
+*   `dc=com`: This is the RDN of the topmost domain component, signifying the root of this particular directory partition.
+
+[[relative-distinguished-name]]
+=== Relative Distinguished Name (RDN)
+
+The *Relative Distinguished Name (RDN)* is the most specific component of an entry's DN. It uniquely identifies an entry *among its siblings* (other entries that share the same parent entry).
+
+Key aspects of RDNs:
+
+*   **Local Identifier**: An RDN acts as the local name for an entry within its parent container.
+*   **Attribute-Value Pair**: An RDN consists of one or more attribute-value pairs (e.g., `uid=jdoe`, `cn=John Doe`). Typically, it's a single attribute-value pair that is unique among siblings.
+*   **Schema-Defined**: The attribute chosen for an RDN must be defined in the schema as an RDN-capable attribute for the entry's *objectClass*. Common RDN attributes include `uid` (user ID), `cn` (common name), or `ou` (organizational unit name).
+
+[[example-rdn]]
+=== Example RDN
+
+For the user "John Doe" with DN `uid=jdoe,ou=users,dc=example,dc=com`:
+The RDN for this specific user entry is `uid=jdoe`.
+
+If there were another user under `ou=users,dc=example,dc=com` with `uid=jsmith`, their RDN would be `uid=jsmith`. These RDNs distinguish the two users within the `ou=users` container.
+
+[[ldap-object-classes]]
+== Object Classes: Defining Entry Types
+
+[[what-is-an-object-class]]
+=== What is an Object Class?
+
+An *object class* is a named collection of attributes that define the type of an entry and its characteristics. When you create an entry, you assign one or more object classes to it. These object classes act as templates, dictating the structure and content that the entry *must* or *may* contain.
+
+Key aspects of object classes:
+
+*   **Attribute Mandates**: Object classes define which attributes are *mandatory* (MUST be present in an entry of that type) and which are *optional* (MAY be present).
+*   **Hierarchical Inheritance**: Object classes are hierarchical. They can inherit attributes and rules from other object classes. This promotes reusability and consistency. For instance, `organizationalPerson` inherits from `person`, which in turn inherits from `top`.
+*   **Categorization**: Object classes categorize entries, allowing directory clients to understand what kind of information an entry holds and what attributes they can expect.
+
+[[example-object-classes]]
+=== Example Object Classes for a User
+
+An `inetOrgPerson` entry, commonly used for representing internet users, typically uses a combination of these object classes:
+
+*   `top`: This is the base object class from which all other object classes implicitly or explicitly inherit. It primarily requires the `objectClass` attribute itself to be present in any entry.
+*   `person`: Inherits from `top`. This class defines attributes common to all persons, such as `sn` (surname - mandatory) and `cn` (common name - mandatory).
+*   `organizationalPerson`: Inherits from `person`. It adds attributes relevant to a person within an organization, such as `title`, `telephoneNumber`, `facsimileTelephoneNumber` (all optional).
+*   `inetOrgPerson`: Inherits from `organizationalPerson`. This class extends the definition with attributes commonly used for internet-enabled users, such as `mail`, `homePhone`, `mobile` (all optional).
+
+By assigning `objectClass: top`, `objectClass: person`, `objectClass: organizationalPerson`, and `objectClass: inetOrgPerson` to an entry, you ensure that the entry adheres to a well-defined structure for an internet-enabled user, including all mandatory and relevant optional attributes from these classes.
+
+[[ldap-schema]]
+== Schema: The Rulebook of the Directory
+
+[[what-is-schema]]
+=== What is Schema?
+
+The *schema* is the comprehensive set of rules that governs the structure, syntax, and content of an entire LDAP directory. It acts as the blueprint or the "grammar" for all data stored within the Directory Information Tree (DIT). The schema is fundamental to maintaining data consistency, integrity, and interoperability across the directory.
+
+Key aspects of schema:
+
+*   **Defines All Elements**: The schema defines every permissible component within the directory. This includes all valid *object classes*, *attributes*, *matching rules*, and *syntaxes*.
+*   **Enforces Rules**: It ensures that all entries and their attributes conform to predefined standards. For example, it dictates that a `mail` attribute must contain an email address (a specific string format), and that an `inetOrgPerson` entry *must* have a surname.
+*   **Extensible**: While a standard schema exists, it is also extensible, allowing administrators to define custom object classes and attributes to meet specific organizational needs.
+
+[[schema-components]]
+=== Key Schema Components
+
+The LDAP schema is composed of several interlocking definitions:
+
+*   **Attribute Type Definitions**:
+    *   Define the name (e.g., `cn`, `uid`), unique OID, and syntax of an attribute.
+    *   Specify whether the attribute is single-valued or multi-valued.
+    *   Indicate if it can be used as part of an RDN.
+    *   Define its matching rules for searches.
+*   **Object Class Definitions**:
+    *   Define the name (e.g., `inetOrgPerson`, `organizationalUnit`), unique OID, and type (Structural, Auxiliary, Abstract) of an object class.
+    *   Specify which object classes it inherits from.
+    *   List the attributes that *must* (mandatory) be present in an entry belonging to this object class.
+    *   List the attributes that *may* (optional) be present.
+*   **Matching Rules**:
+    *   Define how attribute values are compared during LDAP operations like searches or binds. Examples include case-sensitive string matching, numeric matching, or approximate matching.
+*   **Syntaxes (Attribute Value Types)**:
+    *   Define the data types and format for attribute values. Examples include `Directory String` (for general text), `Integer`, `Boolean`, `Generalized Time` (for timestamps), or `Binary`.
+
+The schema ensures data consistency and integrity across the directory. Without a defined and enforced schema, an LDAP directory would be chaotic and unusable.
+
+[[hands-on-exploration]]
+== Hands-on Exploration: Discovering LDAP Concepts
+
+To solidify your understanding, let's perform a hands-on exploration using the `ldapsearch` utility. This tool allows you to query an LDAP server and observe how entries, attributes, DNs, RDNs, and object classes are represented in practice.
+
+.Activity: Explore LDAP Concepts using `ldapsearch`
+====
+This activity demonstrates how to query an LDAP server to observe entries, attributes, DNs, RDNs, and object classes.
+
+.Prerequisites:
+*   An operational LDAP server. For the purposes of this lab, we'll assume a Red Hat Directory Server instance (or compatible LDAP server) is running and accessible (e.g., on `localhost`).
+*   The `openldap-clients` package installed on your Red Hat Enterprise Linux system, which provides the `ldapsearch` command. You can install it with `sudo dnf install openldap-clients`.
+
+.Steps:
+
+. *Identify a Base DN:*
++
+For this exercise, let's assume your directory has a base DN of `dc=example,dc=com` and contains an Organizational Unit (OU) for users at `ou=users,dc=example,dc=com`. If you have a different setup, adjust the base DN accordingly.
+
+. *Perform a Basic Search for User Entries:*
++
+Execute the following `ldapsearch` command to retrieve information about entries that are of type `inetOrgPerson` within the `ou=users` container. We will explicitly request the `dn`, `uid`, `cn`, `sn`, `objectClass`, and `mail` attributes.
++
+[source,bash,subs="+attributes"]
+----
+ldapsearch -x -H ldap://localhost -b "ou=users,dc=example,dc=com" -LLL "(objectClass=inetOrgPerson)" dn uid cn sn objectClass mail
+----
++
+[subs="+attributes"]
+*   `-x`: Use simple authentication (no SASL). This is sufficient for anonymous binds to a default configured RHDS.
+*   `-H ldap://localhost`: Connects to the LDAP server on `localhost` using the standard unencrypted LDAP port (389).
+*   `-b "ou=users,dc=example,dc=com"`: Specifies the *base DN* for the search. The search will begin at this point in the DIT.
+*   `-LLL`: Formats the output in LDIF (LDAP Data Interchange Format) for easy reading, suppressing comments and version information.
+*   `"(objectClass=inetOrgPerson)"`: This is the *search filter*. It instructs `ldapsearch` to return only entries that have the `inetOrgPerson` *object class* assigned.
+*   `dn uid cn sn objectClass mail`: These are the specific *attributes* we want to retrieve and display for each matching entry.
+
+. *Analyze the Output:*
++
+You will observe output similar to the following (actual output will depend on the entries in your directory):
++
+[source,text]
+----
+dn: uid=jdoe,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jdoe
+cn: John Doe
+sn: Doe
+mail: jdoe@example.com
+
+dn: uid=asmith,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: asmith
+cn: Alice Smith
+sn: Smith
+mail: asmith@example.com
+----
++
+From this output, you can directly identify the core LDAP concepts:
+*   `dn: uid=jdoe,ou=users,dc=example,dc=com`: This entire line is the *Distinguished Name (DN)* for the entry representing John Doe.
+*   `uid=jdoe`: This is the *Relative Distinguished Name (RDN)* for John Doe, unique among his siblings under `ou=users`.
+*   `objectClass: top`, `objectClass: person`, etc.: These are the *object classes* assigned to the entry, defining its type and the attributes it must or may contain according to the *schema*.
+*   `uid: jdoe`, `cn: John Doe`, `sn: Doe`, `mail: jdoe@example.com`: These are the individual *attributes* and their corresponding values that describe the `jdoe` entry.
+
+This hands-on exploration provides a concrete view of how these abstract LDAP concepts manifest in a real directory server's data. As you progress, you'll learn to manipulate these elements to manage your directory effectively.
+====

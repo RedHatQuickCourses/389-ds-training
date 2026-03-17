@@ -1,0 +1,264 @@
+#  Implement networking solutions for containerized directory servers.
+
+= Implement Networking Solutions for Containerized Directory Servers
+:navtitle: Container Networking
+
+Directory servers, like Red Hat Directory Server (RHDS), are critical components of an organization's identity infrastructure, requiring robust and secure network connectivity to function correctly. When deploying RHDS in a containerized environment using tools like Podman, understanding and implementing effective networking solutions is paramount. This section will delve into the fundamental concepts of Podman networking and demonstrate how to configure network access for RHDS containers to ensure they can communicate with clients, other services, and potentially other RHDS instances for replication.
+
+== Podman Networking Fundamentals
+
+Podman, a daemonless container engine, provides various networking capabilities that allow containers to communicate with the host system, other containers, and external networks. By default, Podman sets up a "bridge" network that isolates containers while still allowing outbound communication.
+
+=== Default Bridge Network
+
+When you run a container without specifying a network, Podman attaches it to the default `podman` bridge network.
+This network allows containers to:
+
+*   **Communicate with the host:** Containers can reach services running on the host via the host's IP address.
+*   **Communicate with the internet:** Containers can access external resources (e.g., download packages, resolve DNS).
+*   **Communicate with each other (on the same bridge):** Containers on the same bridge network can communicate using their assigned IP addresses.
+
+However, services running *inside* the container are not automatically exposed to the host system or external clients. For external access, you need to explicitly map container ports to host ports.
+
+=== Port Mapping
+
+Port mapping is the most common method for making a service inside a container accessible from the host system or external clients. The `-p` or `--publish` option with `podman run` is used for this purpose.
+
+The syntax for port mapping is typically `host_port:container_port`. For example, `-p 389:389` maps port 389 inside the container to port 389 on the host. This allows clients on the host or external networks (if the host firewall permits) to connect to the service running on port 389 within the container by using the host's IP address and the mapped host port.
+
+=== Custom Networks
+
+While the default bridge network is sufficient for many basic deployments, Podman allows you to create custom bridge networks. Custom networks offer several advantages:
+
+*   **Isolation:** Group related containers onto their own network, providing better isolation from other containers.
+*   **Simplified DNS Resolution:** Containers on the same custom network can resolve each other by their container names, simplifying inter-container communication.
+*   **Network Segmentation:** Align container networks with specific security or application requirements.
+
+To create a custom network, you use `podman network create`. Then, when running a container, you specify the network using the `--network` option.
+
+[source,bash]
+----
+podman network create my-rhds-net
+podman run --network my-rhds-net ...
+----
+
+== Networking Considerations for RHDS Containers
+
+Red Hat Directory Server typically uses the following standard ports:
+
+*   **389/TCP:** For unencrypted LDAP communication.
+*   **636/TCP:** For encrypted LDAP communication (LDAPS).
+
+When deploying RHDS in a container, these ports must be exposed and mapped correctly to allow clients (e.g., applications, users) to connect to the directory server.
+
+For a single RHDS instance, you'll primarily focus on exposing these ports to the host system. In more advanced scenarios, such as deploying multiple RHDS instances for replication, custom networks become invaluable, allowing containers to communicate securely and efficiently without needing to expose replication-specific ports directly to the host.
+
+== Lab: Configure Networking for a Containerized RHDS Instance
+
+This hands-on lab will guide you through deploying an RHDS 13 container and configuring its network access using Podman, making it accessible from your host system.
+
+=== Prerequisites
+
+*   A Red Hat Enterprise Linux 9 system with Podman installed and configured.
+*   Access to the Red Hat Container Registry (registry.redhat.io). You'll need to authenticate.
+
+[source,bash]
+----
+# Ensure Podman is installed
+sudo dnf install -y podman
+
+# Authenticate to Red Hat Container Registry
+sudo podman login registry.redhat.io
+----
+(Enter your Red Hat account username and password when prompted.)
+
+=== Activity 1: Deploy RHDS with Port Mapping
+
+In this activity, you will deploy an RHDS 13 container and map its standard LDAP/LDAPS ports to the host system.
+
+. Pull the Red Hat Directory Server 13 container image.
++
+[source,bash]
+----
+sudo podman pull registry.redhat.io/rhel8/ds-13:latest
+----
+
+. Create a persistent volume for the RHDS instance data. This ensures your directory data is preserved even if the container is removed.
++
+[source,bash]
+----
+sudo podman volume create rhds-data
+----
+
+. Run the RHDS container, mapping ports 389 and 636 from the container to the host, and mounting the persistent volume. We'll perform a basic installation, accepting default settings for simplicity.
++
+[source,bash]
+----
+sudo podman run -it \
+  --name rhds1 \
+  -p 389:389 \
+  -p 636:636 \
+  -v rhds-data:/data:Z \
+  registry.redhat.io/rhel8/ds-13:latest \
+  dscreate interactive
+----
++
+When `dscreate interactive` runs inside the container, you will be prompted to configure the new directory server instance. Provide the following details:
++
+*   **Instance Name:** `instance1`
+*   **System User for Directory Server:** `dirsrv`
+*   **System Group for Directory Server:** `dirsrv`
+*   **IP Address (or leave blank for all):** _(Press Enter for all interfaces)_
+*   **Port for LDAP:** `389`
+*   **Port for LDAPS:** `636`
+*   **Admin User (cn=Directory Manager):** `admin`
+*   **Admin Password:** `RedHat123!` (or your preferred strong password)
+*   **Admin Password (confirm):** `RedHat123!`
+*   **Suffix Name (e.g., dc=example,dc=com):** `dc=example,dc=com`
+*   **Root DN for Suffix:** `cn=Manager,dc=example,dc=com`
+*   **Root DN Password:** `RedHat123!`
+*   **Root DN Password (confirm):** `RedHat123!`
++
+Review the summary and confirm to create the instance. Once the instance is created and started, you'll see messages indicating it's running.
+
+. Open a new terminal on your host system.
+
+. Verify the RHDS container is running and its ports are mapped.
++
+[source,bash]
+----
+sudo podman ps
+----
++
+You should see output similar to this, showing the `PORTS` column with `0.0.0.0:389->389/tcp, 0.0.0.0:636->636/tcp`:
++
+```
+CONTAINER ID  IMAGE                                      COMMAND               CREATED         STATUS         PORTS                                      NAMES
+a1b2c3d4e5f6  registry.redhat.io/rhel8/ds-13:latest      dscreate interactive  2 minutes ago   Up 2 minutes   0.0.0.0:389->389/tcp, 0.0.0.0:636->636/tcp  rhds1
+```
+
+. Test connectivity to the containerized RHDS instance from the host using `ldapsearch`.
++
+First, you might need to install `openldap-clients` on your host if you don't have it.
++
+[source,bash]
+----
+sudo dnf install -y openldap-clients
+----
++
+Now, perform an `ldapsearch` to bind to the directory and retrieve the DSE Root (Directory Server Entry Root) information. Replace `RedHat123!` with your admin password if you chose a different one.
++
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 \
+  -D "cn=Directory Manager" -w "RedHat123!" \
+  -s base -b "" \
+  objectclass=*
+----
++
+You should see detailed information about the directory server, including its vendor name (`Red Hat Directory Server`) and version, confirming successful communication.
+
+=== Activity 2: Explore Container Network Configuration and Custom Networks (Optional)
+
+This activity delves deeper into Podman's networking capabilities, allowing you to examine the default network and create a custom one.
+
+. Inspect the network configuration of your `rhds1` container.
++
+[source,bash]
+----
+sudo podman inspect rhds1 | grep -A 15 "Networks"
+----
++
+Look for the `IPAddress` within the `podman` network section. This is the container's internal IP address on the default bridge.
+
+. List Podman networks.
++
+[source,bash]
+----
+sudo podman network ls
+----
++
+You'll typically see the `podman` (default) network.
+
+. Inspect the default `podman` bridge network.
++
+[source,bash]
+----
+sudo podman network inspect podman
+----
++
+This command provides detailed information about the bridge, including its subnet and any connected containers.
+
+. Create a custom network for future RHDS deployments.
++
+[source,bash]
+----
+sudo podman network create my-rhds-replication-net --subnet 10.88.0.0/24
+----
++
+We explicitly define a subnet here for better control, though Podman would assign one if not specified.
+
+. Inspect your newly created network.
++
+[source,bash]
+----
+sudo podman network inspect my-rhds-replication-net
+----
++
+Notice the `Subnet` and other details. Currently, no containers are attached.
+
+. Stop and remove the existing `rhds1` container.
++
+[source,bash]
+----
+sudo podman stop rhds1
+sudo podman rm rhds1
+----
+
+. Deploy a *new* RHDS instance, `rhds2`, and attach it to your custom network. This time, we'll run it in detached mode (`-d`) and skip `dscreate interactive` for brevity (assuming it's already configured or will be configured via scripting later). We still need port mapping for external access.
++
+[source,bash]
+----
+sudo podman run -d \
+  --name rhds2 \
+  --network my-rhds-replication-net \
+  -p 389:389 \
+  -p 636:636 \
+  -v rhds-data:/data:Z \
+  registry.redhat.io/rhel8/ds-13:latest
+----
++
+_Note: If `dscreate` hasn't run yet on the persistent volume, this container will start but might not be fully functional as an RHDS instance without configuration. For this lab, the focus is on the network attachment._
+
+. Verify `rhds2` is running and connected to `my-rhds-replication-net`.
++
+[source,bash]
+----
+sudo podman inspect rhds2 | grep -A 10 "Networks"
+----
++
+You should see `my-rhds-replication-net` listed under `Networks`, along with its `IPAddress`.
+
+. Test external access again (if `rhds2` was configured, or just verify the container is listening).
++
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 \
+  -D "cn=Directory Manager" -w "RedHat123!" \
+  -s base -b "" \
+  objectclass=*
+----
++
+This should still work because we re-mapped the ports. The custom network primarily affects internal container-to-container communication and network isolation.
+
+. Clean up the custom network and containers.
++
+[source,bash]
+----
+sudo podman stop rhds2
+sudo podman rm rhds2
+sudo podman volume rm rhds-data
+sudo podman network rm my-rhds-replication-net
+----
+
+By completing these activities, you've gained practical experience in configuring networking for containerized Red Hat Directory Server instances, including using port mapping for external access and creating custom networks for enhanced control and isolation. This understanding is crucial for deploying robust and scalable RHDS solutions in container environments.

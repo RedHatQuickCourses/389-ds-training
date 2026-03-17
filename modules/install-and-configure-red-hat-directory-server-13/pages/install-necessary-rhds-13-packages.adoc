@@ -1,0 +1,138 @@
+#  Install necessary RHDS 13 packages.
+
+:install-rhds-packages:
+== Install Necessary RHDS 13 Packages
+
+This section guides you through the process of installing the required Red Hat Directory Server 13 packages on a Red Hat Enterprise Linux 9 system. Proper package installation is the foundational step before configuring and deploying any RHDS instance.
+
+=== Understanding RHDS 13 Packaging
+
+Red Hat Directory Server 13 is delivered as a set of RPM packages available through Red Hat's content delivery networks. On Red Hat Enterprise Linux 9, these packages are primarily found within the `AppStream` repository. The core `redhat-directory-server` package installs the server binaries, configuration files, and essential utilities necessary to create and manage directory instances.
+
+When you install the main `redhat-directory-server` package, `dnf` (the default package manager for RHEL 9) automatically resolves and installs all required dependencies, ensuring that your system has all the necessary libraries and components to run RHDS. These dependencies might include various utility libraries, common cryptography libraries, and other system tools.
+
+It is crucial to ensure that your RHEL 9 system is properly subscribed to Red Hat and has access to the `AppStream` repository. Without proper subscription and repository access, `dnf` will not be able to locate and download the RHDS packages.
+
+=== Hands-on Lab: Deploy RHDS 13 Packages
+
+This lab activity walks you through the steps to prepare your RHEL 9 system and install the Red Hat Directory Server 13 packages.
+
+==== Prerequisites
+
+*   A running Red Hat Enterprise Linux 9 system.
+*   The system must be registered with Red Hat Subscription Management.
+*   Root or `sudo` privileges on the RHEL 9 system.
+*   Internet connectivity to access Red Hat repositories.
+
+==== Step 1: Verify System Subscription and Repository Access
+
+Before installing any packages, confirm that your RHEL 9 system is correctly subscribed and has access to the necessary repositories.
+
+. Open a terminal on your RHEL 9 system.
+. Verify the subscription status:
++
+----
+sudo subscription-manager status
+----
++
+[NOTE]
+The output should indicate that the system is "subscribed" and that the "Overall Status" is "Current."
+
+. List available repositories to ensure `rhel-9-for-x86_64-appstream-rpms` is present:
++
+----
+sudo dnf repolist
+----
++
+[TIP]
+If the `appstream` repository is not listed or enabled, you might need to enable it manually. The AppStream repository is typically enabled by default on RHEL 9. If it's disabled, you can enable it using `sudo subscription-manager repos --enable rhel-9-for-x86_64-appstream-rpms`.
+
+==== Step 2: Install Red Hat Directory Server 13 Packages
+
+Now, use `dnf` to install the `redhat-directory-server` package.
+
+. Install the RHDS package:
++
+----
+sudo dnf install redhat-directory-server -y
+----
++
+[NOTE]
+The `-y` flag automatically confirms any prompts during the installation process. Review the package list `dnf` proposes before running in a production environment.
+
+. `dnf` will download the `redhat-directory-server` package along with all its dependencies. The output will show the progress of the download and installation.
++
+[EXAMPLE]
+----
+Last metadata expiration check: 0:00:30 ago on Tue 24 Oct 2023 09:30:00 AM UTC.
+Dependencies resolved.
+================================================================================
+ Package                     Architecture Version           Repository    Size
+================================================================================
+Installing:
+ redhat-directory-server     x86_64       13.0.0-X.el9_X      appstream    4.2 M
+Installing dependencies:
+ 389-ds-base                 x86_64       2.4.X-X.el9_X       appstream    2.1 M
+ 389-ds-base-libs            x86_64       2.4.X-X.el9_X       appstream    1.0 M
+ 389-ds-base-legacy-tools    x86_64       2.4.X-X.el9_X       appstream    211 k
+ [...]
+Transaction Summary
+================================================================================
+Install  XX Packages
+
+Total download size: XX M
+Installed size: XX M
+Downloading Packages:
+(1/XX): 389-ds-base-libs-2.4.X-X.el9_X.x86_64.rpm          XXX kB/s | 1.0 MB  00:00
+[...]
+Running transaction check
+Transaction check succeeded.
+Running transaction test
+Transaction test succeeded.
+Running transaction
+  Preparing        :                                                        1/1
+  Installing       : 389-ds-base-libs-2.4.X-X.el9_X.x86_64                   1/XX
+  Installing       : 389-ds-base-2.4.X-X.el9_X.x86_64                        2/XX
+  Installing       : 389-ds-base-legacy-tools-2.4.X-X.el9_X.x86_64           3/XX
+  Installing       : redhat-directory-server-13.0.0-X.el9_X.x86_64           XX/XX
+  Running scriptlet: redhat-directory-server-13.0.0-X.el9_X.x86_64           XX/XX
+  Verifying        : redhat-directory-server-13.0.0-X.el9_X.x86_64           XX/XX
+  Verifying        : 389-ds-base-2.4.X-X.el9_X.x86_64                        XX/XX
+  Verifying        : 389-ds-base-libs-2.4.X-X.el9_X.x86_64                   XX/XX
+  Verifying        : 389-ds-base-legacy-tools-2.4.X-X.el9_X.x86_64           XX/XX
+
+Installed:
+  389-ds-base-2.4.X-X.el9_X.x86_64
+  389-ds-base-libs-2.4.X-X.el9_X.x86_64
+  389-ds-base-legacy-tools-2.4.X-X.el9_X.x86_64
+  redhat-directory-server-13.0.0-X.el9_X.x86_64
+  [...]
+
+Complete!
+----
+
+==== Step 3: Verify the Installation
+
+After the installation completes, verify that the RHDS packages and associated tools are correctly installed.
+
+. Check the installed package version:
++
+----
+rpm -q redhat-directory-server
+----
++
+The output should show the version number, for example: `redhat-directory-server-13.0.0-X.el9_X.x86_64`.
+
+. Confirm the presence of core RHDS utilities by checking their version or help output:
++
+----
+dscreate --version
+dsconf --version
+dsidm --version
+dsctl --version
+----
++
+[NOTE]
+Successful execution of these commands, showing version information or command usage, indicates that the tools are installed and accessible in your system's PATH.
+
+You have successfully installed the necessary Red Hat Directory Server 13 packages on your RHEL 9 system. The system is now ready for initial configuration of an RHDS instance.

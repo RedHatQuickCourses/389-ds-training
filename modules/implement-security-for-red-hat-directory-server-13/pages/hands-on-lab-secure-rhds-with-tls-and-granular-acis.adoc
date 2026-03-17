@@ -1,0 +1,484 @@
+#  Hands-on Lab: Secure RHDS with TLS and granular ACIs.
+
+:rhds13-security-lab:
+:navtitle: Hands-on Lab: Secure RHDS with TLS and granular ACIs
+:page-aliases: security:lab_secure_rhds.adoc
+
+= Hands-on Lab: Secure RHDS with TLS and Granular ACIs
+
+This lab guides you through securing Red Hat Directory Server (RHDS) 13 by configuring Transport Layer Security (TLS) for encrypted communication and implementing granular Access Control Instructions (ACIs) to protect directory data.
+
+== Overview
+
+Securing your directory server is paramount to protect sensitive user information and ensure compliance. This lab focuses on two critical security mechanisms:
+
+*   *TLS/SSL:* Encrypting data in transit between clients and the server to prevent eavesdropping and tampering.
+*   *ACIs:* Defining fine-grained permissions to control who can access and modify specific directory entries and attributes.
+
+== Learning Objectives
+
+Upon completing this lab, you will be able to:
+
+*   Generate and manage server certificates for RHDS 13.
+*   Configure RHDS to use TLS/SSL for secure communication (LDAPS and STARTTLS).
+*   Test secure client connections to RHDS.
+*   Understand the syntax and principles of Access Control Instructions (ACIs).
+*   Implement ACIs to control read and write access to directory data at a granular level.
+*   Verify ACI rules using standard LDAP client tools.
+
+== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance on a RHEL 9 system. Refer to the "Install and Configure Red Hat Directory Server 13" lab if you need to set one up.
+*   Basic familiarity with the Linux command line.
+*   Access to the `root` user or a user with `sudo` privileges on the RHDS server.
+*   The `ldap` client utilities (e.g., `ldapsearch`, `ldapadd`, `ldapmodify`) installed. These are usually part of the `openldap-clients` package.
+*   Administrative credentials for your RHDS instance (e.g., `cn=Directory Manager`).
+
+== Lab Environment Setup
+
+For consistency, we will assume:
+
+*   *RHDS Instance Name:* `instance1`
+*   *RHDS Base DN:* `dc=example,dc=com`
+*   *Directory Manager DN:* `cn=Directory Manager`
+*   *Directory Manager Password:* `redhat` (Replace with your actual password if different)
+*   *RHDS Server Hostname:* `rhds-server.example.com` (Replace with your server's actual hostname or IP)
+
+Ensure your RHDS instance `instance1` is running. You can check its status using:
+
+[source,bash]
+----
+dsctl instance1 status
+----
+
+If it's not running, start it:
+
+[source,bash]
+----
+dsctl instance1 start
+----
+
+== Part 1: Securing RHDS with TLS
+
+This section guides you through generating a self-signed certificate, configuring RHDS to use it, and enabling secure LDAP communication.
+
+=== Step 1: Understand Certificate Management in RHDS
+
+RHDS uses a Network Security Services (NSS) database to store cryptographic keys and certificates. Each RHDS instance typically has its own NSS database. You'll use the `certutil` utility to manage certificates within this database.
+
+RHDS supports two primary modes for secure communication:
+
+*   *LDAPS (LDAP over SSL):* A dedicated port (commonly 636) where the entire session is encrypted from the start using SSL/TLS.
+*   *STARTTLS:* An extension to the standard LDAP protocol (port 389) that allows a client to initiate an unencrypted connection and then "upgrade" it to a secure (TLS) connection.
+
+=== Step 2: Generate a Self-Signed Certificate for RHDS
+
+While in a production environment you would obtain certificates from a trusted Certificate Authority (CA), for this lab, we will generate a self-signed certificate.
+
+.Log in as `root` or a user with `sudo` on your RHDS server.
+
+.Navigate to the NSS certificate database directory for your RHDS instance. The path typically follows `/etc/dirsrv/slapd-<instance_name>/`.
+
+[source,bash]
+----
+cd /etc/dirsrv/slapd-instance1/
+----
+
+.Generate a new self-signed certificate and add it to the NSS database. You'll be prompted for the NSS database password (which is `instance1`'s password, typically `redhat` if not changed during setup).
++
+[source,bash,subs="attributes+"]
+----
+certutil -S \
+  -n "rhds-server" \
+  -s "CN=rhds-server.example.com,O=Example Company,L=Anytown,ST=Any State,C=US" \
+  -t "CT,C,C" \
+  -x \
+  -v 120 \
+  -d .
+----
++
+*   `-S`: Generate a new key and certificate.
+*   `-n "rhds-server"`: Assigns a nickname (alias) to the certificate. This nickname is important for referring to the certificate later.
+*   `-s "..."`: Specifies the subject DN for the certificate. *Make sure `CN` matches your server's hostname or IP address.*
+*   `-t "CT,C,C"`: Sets the trust attributes for the certificate (SSL client, SSL server, email recipient).
+*   `-x`: Creates a self-signed certificate.
+*   `-v 120`: Sets the validity period to 120 months (10 years).
+*   `-d .`: Specifies that the NSS database is in the current directory.
++
+You will be prompted to enter the Password for the Certificate Database. This is the password for the RHDS NSS database, not a new password for the certificate itself. By default, it's the same as your Directory Manager password (`redhat` in our lab setup).
+
+.List the certificates in the NSS database to verify your new certificate:
+[source,bash]
+----
+certutil -L -d .
+----
+You should see `rhds-server` in the list of certificates.
+
+=== Step 3: Configure RHDS to Use the New Certificate
+
+Now, inform RHDS to use the certificate you just generated.
+
+.Use `dsconf` to set the server certificate nickname:
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w redhat instance1 security set-cert-nick "rhds-server"
+----
++
+This command tells RHDS which certificate in its NSS database to use for TLS connections.
+
+.Restart the RHDS instance for the changes to take effect:
+[source,bash]
+----
+dsctl instance1 restart
+----
+
+=== Step 4: Enable LDAPS (Port 636)
+
+By default, LDAPS on port 636 might not be enabled.
+
+.Check if the secure port is already enabled:
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w redhat instance1 security get
+----
+Look for `Secure port enabled`. If it's `off`, you need to enable it.
+
+.Enable the secure port (LDAPS):
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w redhat instance1 security set --secure-port-enabled on
+----
+
+.Restart RHDS again:
+[source,bash]
+----
+dsctl instance1 restart
+----
+
+.Open the firewall for port 636 (and optionally 389 for STARTTLS if not already open):
+[source,bash]
+----
+sudo firewall-cmd --add-port=636/tcp --permanent
+sudo firewall-cmd --add-port=389/tcp --permanent # For STARTTLS
+sudo firewall-cmd --reload
+----
+
+=== Step 5: Test Secure Connections (LDAPS and STARTTLS)
+
+Now, let's verify that your RHDS instance is accepting secure connections.
+
+.Test LDAPS on port 636:
+[source,bash,subs="attributes+"]
+----
+ldapsearch -H ldaps://rhds-server.example.com:636 \
+  -D "cn=Directory Manager" -w redhat \
+  -b "dc=example,dc=com" \
+  "(objectclass=*)" \
+  dn
+----
++
+*   `-H ldaps://...`: Specifies a secure LDAP connection.
+*   You might get a warning about the server's certificate not being trusted. This is expected with a self-signed certificate. For production, you'd configure your client to trust the CA that signed the server certificate.
+
+.Test STARTTLS on port 389:
+[source,bash,subs="attributes+"]
+----
+ldapsearch -H ldap://rhds-server.example.com:389 \
+  -D "cn=Directory Manager" -w redhat \
+  -ZZ \
+  -b "dc=example,dc=com" \
+  "(objectclass=*)" \
+  dn
+----
++
+*   `-ZZ`: Forces the use of STARTTLS.
++
+Again, you might see certificate warnings, but the connection should succeed, indicating TLS negotiation worked.
+
+If both tests return directory entries, your RHDS instance is successfully configured for secure communication!
+
+== Part 2: Implementing Granular Access Control Instructions (ACIs)
+
+ACIs are powerful rules that define who can perform what actions on which directory entries and attributes. They are stored as `aci` attributes on entries.
+
+=== Step 1: Understand ACI Syntax and Concepts
+
+An ACI typically follows this structure:
+
+`aci: (target) (version <v>) (bind rule) (permissions);`
+
+*   `target`: Specifies the entries or attributes to which the ACI applies. E.g., `targetattr="userPassword"`.
+*   `version <v>`: Usually `v3.0`.
+*   `bind rule`: Defines *who* the rule applies to. E.g., `userdn="ldap:///uid=jsmith,ou=People,dc=example,dc=com"`, `groupdn="ldap:///cn=Managers,ou=Groups,dc=example,dc=com"`, `self`.
+*   `permissions`: Defines *what* actions are allowed or denied. E.g., `(read,write,search,compare)`. `(allow)` or `(deny)`.
+
+RHDS processes ACIs from the root of the DIT down, and `deny` rules always take precedence over `allow` rules.
+
+=== Step 2: Create a Test User and Group
+
+We'll create a simple organizational unit (OU), a user, and a group to test our ACIs.
+
+.Create an OU for users:
+[source,bash,subs="attributes+"]
+----
+ldapadd -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: ou=People,dc=example,dc=com
+objectClass: organizationalUnit
+ou: People
+EOF
+----
+
+.Create a test user `john.doe`:
+[source,bash,subs="attributes+"]
+----
+ldapadd -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: uid=john.doe,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: john.doe
+cn: John Doe
+sn: Doe
+givenName: John
+mail: john.doe@example.com
+userPassword: password
+EOF
+----
+
+.Create a group `Marketing`:
+[source,bash,subs="attributes+"]
+----
+ldapadd -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: cn=Marketing,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: Marketing
+description: Marketing Department
+member: uid=john.doe,ou=People,dc=example,dc=com
+EOF
+----
+
+.Verify the entries:
+[source,bash,subs="attributes+"]
+----
+ldapsearch -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat -b "ou=People,dc=example,dc=com" "(objectclass=*)" dn cn uid
+----
+You should see `john.doe` and `Marketing` entries.
+
+=== Step 3: Implement an ACI to Restrict Attribute Modification
+
+Let's say we want to prevent ordinary users from modifying their `cn` (common name) attribute, but allow the Directory Manager to do so. We'll add an ACI to `ou=People,dc=example,dc=com`.
+
+.Prepare an LDIF file for the ACI (`deny_cn_modification.ldif`):
+[source,ldif]
+----
+dn: ou=People,dc=example,dc=com
+changetype: modify
+add: aci
+aci: (targetattr="cn")(version 3.0; acl "deny cn modification to users"; deny (write) userdn="ldap:///anyone";)
+----
++
+This ACI states: "On any entry under `ou=People`, for the `cn` attribute, deny `write` permissions to `anyone`." `anyone` is a special bind rule that applies to all authenticated users (excluding anonymous).
+
+.Apply the ACI:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat -f deny_cn_modification.ldif
+----
+You should see `modifying entry "ou=People,dc=example,dc=com"`.
+
+.Test the ACI with `john.doe`:
++
+First, try to modify `john.doe`'s `cn` attribute as `john.doe`:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -H ldap://rhds-server.example.com:389 -D "uid=john.doe,ou=People,dc=example,dc=com" -w password << EOF
+dn: uid=john.doe,ou=People,dc=example,dc=com
+changetype: modify
+replace: cn
+cn: Johnny Doe
+EOF
+----
+You should receive an "Insufficient access" or similar error. This indicates the ACI is working as intended.
+
++
+Now, try to modify `john.doe`'s `cn` attribute as `Directory Manager`:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: uid=john.doe,ou=People,dc=example,dc=com
+changetype: modify
+replace: cn
+cn: Johnny Doe
+EOF
+----
+This operation should succeed, as the `Directory Manager` implicitly has full administrative access and is not affected by ACIs on user entries.
+
+.Revert `john.doe`'s `cn` for later tests:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: uid=john.doe,ou=People,dc=example,dc=com
+changetype: modify
+replace: cn
+cn: John Doe
+EOF
+----
+
+=== Step 4: Implement an ACI to Restrict Read Access to an OU
+
+Let's create a new OU `secret` and ensure that only members of the `Marketing` group can see its contents, while other users cannot.
+
+.Create the `ou=secret,dc=example,dc=com` OU:
+[source,bash,subs="attributes+"]
+----
+ldapadd -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: ou=Secret,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Secret
+description: Highly Confidential Information
+EOF
+----
+
+.Create a test entry within the `Secret` OU:
+[source,bash,subs="attributes+"]
+----
+ldapadd -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: cn=Top Secret Doc,ou=Secret,dc=example,dc=com
+objectClass: top
+objectClass: document
+cn: Top Secret Doc
+documentIdentifier: TSD-001
+description: Project Chimera Brief
+EOF
+----
+
+.Prepare an LDIF file for the ACI (`restrict_secret_ou.ldif`). We'll add two ACIs to `ou=Secret,dc=example,dc=com`:
++
+[source,ldif]
+----
+dn: ou=Secret,dc=example,dc=com
+changetype: modify
+add: aci
+aci: (target="ldap:///ou=Secret,dc=example,dc=com")(targetattr="*")(version 3.0; acl "deny all read to anyone"; deny (read,search,compare) userdn="ldap:///anyone";)
+aci: (target="ldap:///ou=Secret,dc=example,dc=com")(targetattr="*")(version 3.0; acl "allow read to Marketing group"; allow (read,search,compare) groupdn="ldap:///cn=Marketing,ou=People,dc=example,dc=com";)
+----
++
+*   The first ACI (`deny`) explicitly denies read, search, and compare permissions on *all* attributes (`targetattr="*"`) within the `Secret` OU to `anyone` (all authenticated users).
+*   The second ACI (`allow`) then explicitly grants read, search, and compare permissions on *all* attributes to members of the `Marketing` group.
++
+Because `deny` rules take precedence, it's crucial to order them correctly. In RHDS, ACIs are processed in a specific order, and typically the most specific `deny` wins. Here, we're explicitly denying and then explicitly allowing, which works as expected. The `deny` for `anyone` takes effect first, then the `allow` for `Marketing` overrides it for group members.
+
+.Apply the ACIs:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat -f restrict_secret_ou.ldif
+----
+
+=== Step 5: Test ACI Rules for Read Access
+
+.Test as an unprivileged user (e.g., `john.doe` is a member of `Marketing`):
+[source,bash,subs="attributes+"]
+----
+ldapsearch -H ldap://rhds-server.example.com:389 -D "uid=john.doe,ou=People,dc=example,dc=com" -w password -b "ou=Secret,dc=example,dc=com" "(objectclass=*)" dn cn
+----
+This search *should* succeed and return the `cn=Top Secret Doc` entry, because `john.doe` is in the `Marketing` group.
+
+.Remove `john.doe` from the `Marketing` group to test the `deny` rule:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: cn=Marketing,ou=People,dc=example,dc=com
+changetype: modify
+delete: member
+member: uid=john.doe,ou=People,dc=example,dc=com
+EOF
+----
+
+.Test again as `john.doe` (now *not* in `Marketing`):
+[source,bash,subs="attributes+"]
+----
+ldapsearch -H ldap://rhds-server.example.com:389 -D "uid=john.doe,ou=People,dc=example,dc=com" -w password -b "ou=Secret,dc=example,dc=com" "(objectclass=*)" dn cn
+----
+This time, you should receive an "Insufficient access" or similar error, indicating that `john.doe` can no longer read the `Secret` OU's contents.
+
+.Re-add `john.doe` to the `Marketing` group:
+[source,bash,subs="attributes+"]
+----
+ldapmodify -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+dn: cn=Marketing,ou=People,dc=example,dc=com
+changetype: modify
+add: member
+member: uid=john.doe,ou=People,dc=example,dc=com
+EOF
+----
+
+== Troubleshooting Tips
+
+*   *Certificate Warnings:* With self-signed certificates, clients will often warn that the server's identity cannot be verified. This is normal in a lab setting. In production, clients are configured to trust your CA.
+*   *Firewall:* Always double-check firewall rules. If you can't connect, `firewall-cmd --list-all` is your friend.
+*   *Restart RHDS:* Many configuration changes, especially those related to security and listeners, require an RHDS restart (`dsctl <instance> restart`).
+*   *ACI Conflicts:* If an ACI isn't working as expected, examine the ACIs applied to the entry and its parent entries using `ldapsearch -LLL -H ldap://... -D "cn=Directory Manager" -w ... -b "<entry_dn>" "aci"`. Remember `deny` rules take precedence.
+*   *Directory Manager Access:* The `cn=Directory Manager` (or the equivalent superuser) should always have full access, overriding ACIs. Use this user for troubleshooting.
+*   *Verbose Logging:* For deep troubleshooting, you can temporarily increase RHDS logging levels in `/etc/dirsrv/slapd-<instance>/dse.ldif` or using `dsconf`.
+
+== Cleaning Up (Optional)
+
+To remove the lab-specific entries and ACIs:
+
+1.  Remove the `Secret` OU and its contents:
+    [source,bash,subs="attributes+"]
+    ----
+    ldapdelete -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+    dn: cn=Top Secret Doc,ou=Secret,dc=example,dc=com
+    EOF
+
+    ldapdelete -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+    dn: ou=Secret,dc=example,dc=com
+    EOF
+    ----
+
+2.  Remove `john.doe` and the `Marketing` group:
+    [source,bash,subs="attributes+"]
+    ----
+    ldapdelete -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+    dn: cn=Marketing,ou=People,dc=example,dc=com
+    EOF
+
+    ldapdelete -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+    dn: uid=john.doe,ou=People,dc=example,dc=com
+    EOF
+    ----
+
+3.  Remove the `ou=People` OU:
+    [source,bash,subs="attributes+"]
+    ----
+    ldapdelete -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+    dn: ou=People,dc=example,dc=com
+    EOF
+    ----
+
+4.  Remove the `aci` attribute from `ou=People,dc=example,dc=com` (if you didn't remove the OU):
+    [source,bash,subs="attributes+"]
+    ----
+    ldapmodify -H ldap://rhds-server.example.com:389 -D "cn=Directory Manager" -w redhat << EOF
+    dn: ou=People,dc=example,dc=com
+    changetype: modify
+    delete: aci
+    aci: (targetattr="cn")(version 3.0; acl "deny cn modification to users"; deny (write) userdn="ldap:///anyone";)
+    EOF
+    ----
+
+5.  (Optional) Disable secure port and remove certificate (if desired to revert all changes):
+    [source,bash,subs="attributes+"]
+    ----
+    dsconf -D "cn=Directory Manager" -w redhat instance1 security set --secure-port-enabled off
+    dsconf -D "cn=Directory Manager" -w redhat instance1 security set-cert-nick "" # Clears the nickname
+    dsctl instance1 restart
+    
+    cd /etc/dirsrv/slapd-instance1/
+    certutil -D -n "rhds-server" -d . # Delete the certificate
+    ----
+
+This lab provided hands-on experience in fortifying your RHDS instance using industry-standard security practices. Understanding and correctly implementing TLS and ACIs are fundamental skills for any RHDS administrator.

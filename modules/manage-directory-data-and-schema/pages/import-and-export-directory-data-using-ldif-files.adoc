@@ -1,0 +1,390 @@
+#  Import and export directory data using LDIF files.
+
+:ldap-data-import-export-with-ldif[]
+= Import and Export Directory Data using LDIF Files
+
+LDIF (LDAP Data Interchange Format) files are the standard plain-text format for representing LDAP directory entries and changes. They are crucial for tasks such as backing up and restoring directory data, migrating data between directory servers, populating a new directory with initial data, or performing bulk modifications.
+
+This section covers the fundamental concepts of LDIF files and provides practical guidance on how to use them for importing and exporting data with Red Hat Directory Server 13.
+
+== Understanding LDIF Files
+
+An LDIF file consists of one or more LDAP entries or change records. Each entry is represented by a series of `attribute: value` pairs, with each entry separated by a blank line.
+
+Here's a basic structure of an LDIF file representing an entry:
+
+[source,ldif]
+----
+dn: uid=user1,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: user1
+cn: User One
+sn: One
+mail: user1@example.com
+userPassword: {SSHA}hashedpassword
+----
+
+LDIF files can also represent changes (add, modify, delete) to existing entries.
+
+[source,ldif]
+----
+dn: uid=user2,ou=Users,dc=example,dc=com
+changetype: add
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: user2
+cn: User Two
+sn: Two
+mail: user2@example.com
+
+dn: uid=user1,ou=Users,dc=example,dc=com
+changetype: modify
+replace: mail
+mail: user1.new@example.com
+
+dn: uid=user3,ou=Users,dc=example,dc=com
+changetype: delete
+----
+
+The `changetype` attribute specifies the type of operation to be performed.
+
+== Exporting Directory Data
+
+Exporting directory data is a common operation performed for backups, migrations, or analysis. Red Hat Directory Server provides robust command-line tools to extract data into LDIF format.
+
+=== Methods for Exporting Data
+
+There are two primary ways to export data from RHDS:
+
+1.  *Using `ldapsearch`*: This is the most common and flexible method for online exports. It allows you to specify a base DN, scope, filters, and attributes to retrieve.
+2.  *Using `dsconf` (`ldap_util_export.pl` wrapper)*: The `dsconf` utility provides a higher-level abstraction for server management tasks, including exporting. Internally, it often uses `ldapsearch` or other server-side mechanisms.
+
+==== Exporting with `ldapsearch`
+
+The `ldapsearch` command is a powerful tool for querying an LDAP directory and can be used to export data by redirecting its output to a file.
+
+.Common `ldapsearch` options for export:
+*   `-h <hostname>`: Specifies the directory server hostname.
+*   `-p <port>`: Specifies the LDAP port (default 389, LDAPS 636).
+*   `-D <binddn>`: Specifies the Distinguished Name (DN) to bind to the directory.
+*   `-w <password>` or `-W`: Specifies the password for the bind DN.
+*   `-b <base_dn>`: Specifies the base DN for the search. This is crucial for defining the scope of the export.
+*   `-s <scope>`: Specifies the search scope (`base`, `one`, `sub`).
+    *   `base`: Searches only the base DN.
+    *   `one`: Searches entries immediately below the base DN.
+    *   `sub`: Searches the base DN and all its subtrees (most common for full export).
+*   `<filter>`: An LDAP search filter to specify which entries to retrieve (e.g., `(objectClass=*)` for all entries).
+*   `<attributes>`: A space-separated list of attributes to retrieve. Omitting this (or using `*`) retrieves all user attributes. `+` retrieves operational attributes.
+
+[NOTE]
+For a full directory export, you typically use `(objectClass=*)` as the filter and a `sub` scope from your root suffix DN.
+
+==== Exporting with `dsconf`
+
+The `dsconf` utility simplifies common administration tasks. While `ldapsearch` is more granular, `dsconf` can be used for administrative exports, often targeting specific databases or suffixes.
+
+.Example `dsconf` export command (conceptual):
+This typically involves using the `backend export` subcommand, though directly specifying `ldap_util_export.pl` through `dsconf` might be necessary for more specific scenarios.
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_password" ldap://localhost:389 backend export --suffix "dc=example,dc=com" --file /tmp/example_export.ldif
+----
+This command tells RHDS to export the data for the `dc=example,dc=com` suffix to the specified file. This method is often preferred for full, consistent backups from the server's perspective.
+
+=== Hands-on Lab: Exporting Directory Data
+
+In this lab, you will export directory data from your Red Hat Directory Server instance using `ldapsearch`.
+
+.Prerequisites:
+*   An active Red Hat Directory Server 13 instance.
+*   Some existing data in your directory (e.g., the `dc=example,dc=com` suffix with some users/groups).
+
+.Lab Steps:
+
+. *Verify Connectivity and Existing Data:*
++
+First, ensure you can connect to your directory server and verify there's data to export.
++
+[source,bash,subs="+attributes"]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectClass=*)"
+----
++
+When prompted, enter your Directory Manager password. You should see a list of entries from your `dc=example,dc=com` suffix.
+
+. *Export All Entries from a Suffix:*
++
+Now, export all entries under the `dc=example,dc=com` suffix to an LDIF file. We'll use the `sub` scope to include all entries within this subtree.
++
+[source,bash,subs="+attributes"]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectClass=*)" -s sub > /tmp/rhds_export_full.ldif
+----
++
+Enter your Directory Manager password.
+
+. *Verify the Exported File:*
++
+Inspect the contents of the exported LDIF file to ensure it contains your directory data.
++
+[source,bash]
+----
+cat /tmp/rhds_export_full.ldif | head -n 20 # View the first 20 lines
+----
++
+You should see `dn` lines and `attribute: value` pairs representing your directory entries.
+
+. *Export Specific Attributes or Filtered Entries:*
++
+Let's say you only want to export the `uid`, `cn`, and `mail` attributes for users (`objectClass=inetOrgPerson`).
++
+[source,bash,subs="+attributes"]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectClass=inetOrgPerson)" uid cn mail > /tmp/rhds_export_users.ldif
+----
++
+Verify the new export file:
++
+[source,bash]
+----
+cat /tmp/rhds_export_users.ldif | head -n 20
+----
++
+Notice that only the specified attributes are present for the matching entries.
+
+== Importing Directory Data
+
+Importing directory data is essential for populating a new server, restoring from a backup, or performing bulk updates. The process involves using command-line tools to read an LDIF file and apply its contents to the directory.
+
+=== Methods for Importing Data
+
+Similar to exporting, you can import data using standard LDAP tools or RHDS specific utilities:
+
+1.  *Using `ldapadd` and `ldapmodify`*: These are the standard LDAP utilities for adding new entries and modifying existing ones, respectively. They are used for online imports.
+2.  *Using `dsconf` (`ldap_util_import.pl` wrapper)*: Provides a wrapper for importing data, often suitable for initial population or full restores. This can sometimes involve stopping the server or specific suffixes for consistency.
+
+==== Importing with `ldapadd` and `ldapmodify`
+
+*   `ldapadd` is used to add *new* entries to the directory. If an entry with the same DN already exists, `ldapadd` will typically fail for that specific entry unless the `--ignore-existing` flag is used (not always available or recommended).
+*   `ldapmodify` is used to *change* or *delete* existing entries, or add new ones if specified with `changetype: add` within the LDIF. It's more versatile for managing existing data.
+
+.Common `ldapadd`/`ldapmodify` options:
+*   `-h <hostname>`: Specifies the directory server hostname.
+*   `-p <port>`: Specifies the LDAP port.
+*   `-D <binddn>`: Specifies the Distinguished Name (DN) to bind to the directory.
+*   `-w <password>` or `-W`: Specifies the password for the bind DN.
+*   `-f <ldif_file>`: Specifies the path to the LDIF file containing the entries or change records.
+*   `-c`: Continue on error (for `ldapmodify`).
+
+[NOTE]
+For large imports, especially when restoring a full backup, it's often recommended to stop the directory server and use the `db2ldif` and `ldif2db` utilities for offline import/export directly against the database files. This ensures consistency and better performance by bypassing the LDAP protocol overhead. However, for everyday additions or modifications, `ldapadd`/`ldapmodify` are perfectly suitable and are performed online.
+
+==== Importing with `dsconf`
+
+The `dsconf` utility can also be used for importing, especially for administrative or initial setup scenarios.
+
+.Example `dsconf` import command (conceptual):
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_password" ldap://localhost:389 backend import --suffix "dc=example,dc=com" --file /tmp/example_import.ldif
+----
+This command instructs RHDS to import the data from `example_import.ldif` into the `dc=example,dc=com` suffix. The server typically handles the underlying `ldapadd`/`ldapmodify` operations or more efficient database-level operations.
+
+=== Hands-on Lab: Managing Directory Entries with LDIF Files
+
+In this lab, you will create new directory entries and modify existing ones using LDIF files and the `ldapadd` and `ldapmodify` commands.
+
+.Prerequisites:
+*   An active Red Hat Directory Server 13 instance.
+*   Directory Manager credentials.
+
+.Lab Steps:
+
+. *Create a New LDIF File for Adding Entries:*
++
+Create a file named `/tmp/new_users.ldif` with the following content. This file defines two new user entries.
++
+[source,ldif,subs="+attributes",id="new-users-ldif"]
+----
+dn: uid=john.doe,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: john.doe
+cn: John Doe
+sn: Doe
+mail: john.doe@example.com
+userPassword: password123 # For lab purposes, use a simple password
+
+dn: uid=jane.smith,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jane.smith
+cn: Jane Smith
+sn: Smith
+mail: jane.smith@example.com
+userPassword: password123 # For lab purposes, use a simple password
+----
++
+[source,bash]
+----
+cat << EOF > /tmp/new_users.ldif
+dn: uid=john.doe,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: john.doe
+cn: John Doe
+sn: Doe
+mail: john.doe@example.com
+userPassword: password123
+
+dn: uid=jane.smith,ou=Users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jane.smith
+cn: Jane Smith
+sn: Smith
+mail: jane.smith@example.com
+userPassword: password123
+EOF
+----
+
+. *Import the New Entries using `ldapadd`:*
++
+Use `ldapadd` to push these new entries into the directory.
++
+[source,bash,subs="+attributes"]
+----
+ldapadd -h localhost -p 389 -D "cn=Directory Manager" -W -f /tmp/new_users.ldif
+----
++
+Enter your Directory Manager password. You should see output indicating the entries were added. If there are errors, ensure the DNs don't already exist and the LDIF syntax is correct.
+
+. *Verify the Added Entries:*
++
+Search for the newly added users to confirm they exist in the directory.
++
+[source,bash,subs="+attributes"]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "ou=Users,dc=example,dc=com" "(uid=john.doe)"
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "ou=Users,dc=example,dc=com" "(uid=jane.smith)"
+----
++
+You should see the full entry details for each user.
+
+. *Create an LDIF File for Modifying an Entry:*
++
+Now, let's modify John Doe's email address and add a description. Create `/tmp/modify_john.ldif`:
++
+[source,ldif,subs="+attributes",id="modify-john-ldif"]
+----
+dn: uid=john.doe,ou=Users,dc=example,dc=com
+changetype: modify
+replace: mail
+mail: john.a.doe@example.com
+add: description
+description: Updated contact information.
+-
+----
++
+[NOTE]
+The `-` (hyphen) on a line by itself indicates the end of a modification block for a specific attribute when performing multiple modifications (e.g., `replace` and `add`) on the same entry in a single `changetype: modify` record.
+
++
+[source,bash]
+----
+cat << EOF > /tmp/modify_john.ldif
+dn: uid=john.doe,ou=Users,dc=example,dc=com
+changetype: modify
+replace: mail
+mail: john.a.doe@example.com
+add: description
+description: Updated contact information.
+-
+EOF
+----
+
+. *Apply the Modification using `ldapmodify`:*
++
+Use `ldapmodify` to apply the changes to John Doe's entry.
++
+[source,bash,subs="+attributes"]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -W -f /tmp/modify_john.ldif
+----
++
+Enter your Directory Manager password.
+
+. *Verify the Modified Entry:*
++
+Search for John Doe again and observe the updated email and new description attribute.
++
+[source,bash,subs="+attributes"]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "ou=Users,dc=example,dc=com" "(uid=john.doe)"
+----
++
+You should see `mail: john.a.doe@example.com` and `description: Updated contact information.`.
+
+. *Create an LDIF File for Deleting an Entry:*
++
+To demonstrate deletion, create `/tmp/delete_jane.ldif`:
++
+[source,ldif,subs="+attributes",id="delete-jane-ldif"]
+----
+dn: uid=jane.smith,ou=Users,dc=example,dc=com
+changetype: delete
+----
++
+[source,bash]
+----
+cat << EOF > /tmp/delete_jane.ldif
+dn: uid=jane.smith,ou=Users,dc=example,dc=com
+changetype: delete
+EOF
+----
+
+. *Apply the Deletion using `ldapmodify`:*
++
+[source,bash,subs="+attributes"]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -W -f /tmp/delete_jane.ldif
+----
++
+Enter your Directory Manager password.
+
+. *Verify the Deletion:*
++
+Attempt to search for Jane Smith.
++
+[source,bash,subs="+attributes"]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "ou=Users,dc=example,dc=com" "(uid=jane.smith)"
+----
++
+This search should return no entries, confirming Jane Smith's entry has been deleted.
+
+== Best Practices and Troubleshooting
+
+*   *Authentication*: Always use secure authentication (`-D` and `-W` for password, or client certificates) when performing import/export operations, especially in production environments.
+*   *TLS/SSL*: Use LDAPS (port 636) or STARTTLS for encrypted communication (`ldapsearch -Z` or `ldapadd -Z`) to protect sensitive directory data during transfer.
+*   *Schema Compliance*: Ensure that imported LDIF data complies with the server's schema. Importing entries with unknown object classes or attributes, or missing mandatory attributes, will result in schema violation errors.
+*   *Online vs. Offline Operations*:
+    *   `ldapadd`/`ldapmodify`/`ldapsearch` are online operations, suitable for incremental changes or queries.
+    *   For full directory backups and restores, especially for large directories, consider using `db2ldif` (export) and `ldif2db` (import) utilities. These tools operate directly on the database files, bypassing the LDAP listener, offering better performance and ensuring data consistency for full snapshots. These operations require stopping the Directory Server instance.
+*   *Error Handling*: When importing large LDIF files, use the `-c` option with `ldapadd`/`ldapmodify` to continue processing the file even if some entries cause errors. Review the output logs carefully to identify and fix failed entries.
+*   *Testing*: Always test import/export procedures in a non-production environment before applying them to a live system.
+*   *Data Consistency*: When exporting data for migration or backup, ensure that the source directory is stable and not undergoing significant changes to avoid inconsistent data in the export file.
+*   *Attribute Handling*: Be aware that `ldapsearch` typically exports only user attributes. To export operational attributes (like `creatorsName`, `createTimestamp`), explicitly request them using `+` (e.g., `ldapsearch ... (objectClass=*) * +`).

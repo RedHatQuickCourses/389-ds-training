@@ -1,0 +1,193 @@
+#  Enable and configure RHDS plugins for extended functionality.
+
+= Enabling and Configuring RHDS Plugins for Extended Functionality
+
+:navtitle: RHDS Plugins
+
+Red Hat Directory Server (RHDS) is a powerful and flexible LDAP-compliant directory service. A significant part of its flexibility comes from its plugin architecture, which allows administrators to extend its core functionality without modifying the server's fundamental code. Plugins are shared libraries that the directory server loads at runtime, enabling it to respond to various LDAP operations with custom logic.
+
+== Understanding RHDS Plugins
+
+Plugins are essentially dynamically loaded modules (`.so` files on Linux) that extend the server's capabilities. They allow RHDS to perform tasks beyond standard LDAP operations, such as enforcing complex password policies, maintaining data consistency, or integrating with external systems.
+
+=== How Plugins Work
+
+RHDS plugins interact with the server through a well-defined API. They can register themselves to be invoked at specific "hooks" during the processing of an LDAP operation. These hooks include:
+
+*   **Pre-operation hooks:** Executed *before* the server performs an LDAP operation (e.g., `add`, `modify`, `delete`, `search`). This is useful for validating data, enforcing policies, or modifying the operation request itself.
+*   **Post-operation hooks:** Executed *after* the server has completed an LDAP operation. This is often used for logging, triggering external events, or performing cleanup tasks.
+*   **Internal operation hooks:** Executed during internal server processes, such as replication or schema management.
+*   **Server startup/shutdown hooks:** Used for initialization and cleanup routines.
+
+When an LDAP operation occurs, the server checks if any registered plugins are configured for that specific hook. If so, it executes the plugin's code, allowing it to inspect, modify, or even abort the operation.
+
+=== Benefits of Using Plugins
+
+*   **Extended Functionality:** Adds features not natively present in the core server.
+*   **Policy Enforcement:** Implements custom rules for data integrity, security, and user management (e.g., password policies, referential integrity).
+*   **Automation:** Automates tasks like group membership updates (e.g., `MemberOf` plugin).
+*   **Integration:** Facilitates integration with other systems by triggering actions based on directory events.
+*   **Performance Optimization:** Some plugins can optimize certain aspects of directory operations.
+
+=== Common RHDS Plugins
+
+RHDS includes a variety of built-in plugins, and custom plugins can also be developed. Here are a few prominent examples:
+
+*   **Referential Integrity Plugin:** Ensures that when an entry referred to by another entry (e.g., a user member of a group) is deleted or renamed, the referring entry is automatically updated.
+*   **Password Policy Plugin:** Enforces rules for password complexity, aging, lockout, and history. (Note: While a core plugin, its detailed configuration is typically covered under *Managing Password Policies*).
+*   **Class of Service (CoS) Plugin:** Allows attributes to be dynamically generated or inherited based on other entries, simplifying attribute management for large numbers of users.
+*   **MemberOf Plugin:** Automatically maintains a `memberOf` attribute on user entries, listing all groups the user is a member of. This is a common requirement for applications using Active Directory-like `memberOf` lookups.
+*   **Entry USN Plugin:** Provides a `uniqueStandardNumber` (USN) attribute for each entry, useful for tracking changes and synchronization.
+*   **Auditing Plugin:** Logs detailed information about all LDAP operations for security and compliance purposes.
+
+== Enabling and Configuring Plugins
+
+Plugins are configured as entries within the Directory Information Tree (DIT), typically under `cn=plugins,cn=config`. Each plugin has its own set of attributes that define its behavior.
+
+The general process for enabling and configuring a plugin involves:
+
+1.  **Identifying the plugin:** Determine which plugin provides the desired functionality.
+2.  **Verifying plugin status:** Check if the plugin is already enabled or configured.
+3.  **Enabling the plugin:** Set the `nsslapd-pluginenabled` attribute to `on` (or `true`).
+4.  **Configuring plugin-specific parameters:** Adjust attributes relevant to the plugin's behavior (e.g., `nsslapd-referralintegrity-on`, `nsslapd-memberof-group-attr`).
+5.  **Restarting/Reinitializing (if required):** Some plugin changes might require a server restart or reinitialization for them to take effect.
+
+The `dsconf` command-line utility is the primary tool for managing server configuration, including plugins. For more complex or fine-grained control, direct `ldapmodify` operations can be used.
+
+.Syntax for `dsconf` to manage plugins
+[source,bash]
+----
+dsconf config <suffix|plugin> <set|get> <plugin-name> --attribute <value>
+----
+
+*   `suffix`: Used when a plugin is configured per-suffix (e.g., Referential Integrity).
+*   `plugin`: Used when a plugin is global to the server instance.
+
+[[hands-on-lab-referential-integrity]]
+=== Hands-on Lab: Configuring the Referential Integrity Plugin
+
+This lab demonstrates how to enable and test the Referential Integrity Plugin. This plugin ensures that if a user (or any entry) is deleted, any references to that user in other entries (like group memberships) are automatically cleaned up.
+
+**Scenario:** We will create a user and a group, make the user a member of the group, enable the Referential Integrity Plugin, and then delete the user to observe the automatic cleanup of the group membership.
+
+**Prerequisites:**
+
+*   A running Red Hat Directory Server 13 instance.
+*   Root or `dsroot` user access to the server.
+*   A test suffix, e.g., `dc=example,dc=com`, already configured. (If not, you can quickly create one using `dsconf config add-suffix dc=example,dc=com`).
+
+==== Step 1: Prepare the Directory with Test Data
+
+First, we'll add a test user and a test group, and make the user a member of the group.
+
+.Create `test_data.ldif` with the following content:
+[source,ldif]
+----
+# User Entry
+dn: uid=jdoe,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jdoe
+cn: John Doe
+sn: Doe
+givenName: John
+displayName: John Doe
+mail: jdoe@example.com
+userPassword: password
+
+# Group Entry
+dn: cn=testers,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: testers
+member: uid=jdoe,ou=users,dc=example,dc=com
+description: Testers group
+----
+
+.Add the test data to the directory:
+[source,bash]
+----
+ldapadd -x -D "cn=Directory Manager" -W -f test_data.ldif
+----
+You will be prompted for the Directory Manager password.
+
+.Verify the entries:
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(uid=jdoe)" uid cn
+ldapsearch -x -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(cn=testers)" cn member
+----
+You should see `uid=jdoe,ou=users,dc=example,dc=com` listed as a member of `cn=testers`.
+
+==== Step 2: Check Current Referential Integrity Status
+
+Before enabling, let's see the current status of the plugin for our suffix.
+
+[source,bash]
+----
+dsconf config suffix get --suffix "dc=example,dc=com" nsslapd-referralintegrity-on
+----
+
+By default, it will likely show `nsslapd-referralintegrity-on: off`.
+
+==== Step 3: Enable the Referential Integrity Plugin for the Suffix
+
+Now, enable the plugin for the `dc=example,dc=com` suffix.
+
+[source,bash]
+----
+dsconf config suffix set --suffix "dc=example,dc=com" nsslapd-referralintegrity-on: on
+----
+
+.Verify the change:
+[source,bash]
+----
+dsconf config suffix get --suffix "dc=example,dc=com" nsslapd-referralintegrity-on
+----
+The output should now show `nsslapd-referralintegrity-on: on`.
+
+[NOTE]
+The Referential Integrity plugin is enabled on a per-suffix basis because its actions are specific to the data within a particular DIT subtree.
+
+==== Step 4: Test the Plugin by Deleting the Referenced Entry
+
+Now, delete the user entry and observe if the group membership is automatically updated.
+
+.Delete the user entry:
+[source,bash]
+----
+ldapdelete -x -D "cn=Directory Manager" -W "uid=jdoe,ou=users,dc=example,dc=com"
+----
+
+.Verify the group entry:
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(cn=testers)" cn member
+----
+
+**Expected Output:** You should now see that the `cn=testers` group entry no longer lists `uid=jdoe,ou=users,dc=example,dc=com` in its `member` attribute. The Referential Integrity plugin automatically removed the reference when the `jdoe` user was deleted.
+
+If the plugin was *not* enabled, the `member` attribute in `cn=testers` would still incorrectly point to the non-existent `jdoe` user, creating a "dangling reference."
+
+==== Step 5: (Optional) Disable the Plugin
+
+If you wish to disable the plugin, simply set `nsslapd-referralintegrity-on` back to `off`.
+
+[source,bash]
+----
+dsconf config suffix set --suffix "dc=example,dc=com" nsslapd-referralintegrity-on: off
+----
+
+==== Troubleshooting Plugin Issues
+
+If a plugin doesn't behave as expected:
+
+1.  **Check `nsslapd-pluginenabled`:** Ensure the plugin is actually enabled (`on` or `true`).
+2.  **Review Configuration:** Double-check all plugin-specific configuration attributes for typos or incorrect values.
+3.  **Inspect Logs:** The `access` log (`/var/log/dirsrv/slapd-<instance_name>/access`) and `errors` log (`/var/log/dirsrv/slapd-<instance_name>/errors`) are invaluable. Plugins often log their actions or any errors encountered. Look for messages related to the plugin name.
+4.  **Restart Server:** While many configuration changes are dynamic, some plugin updates or deep configuration changes might require a full server restart (`dsctl restart <instance_name>`).
+5.  **Plugin Dependencies:** Ensure any prerequisite components or other plugins are also correctly configured and enabled.
+
+By leveraging plugins, administrators can significantly enhance the functionality and maintainability of their Red Hat Directory Server environments, tailoring it to specific organizational requirements.

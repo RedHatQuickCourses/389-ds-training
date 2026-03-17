@@ -1,0 +1,245 @@
+#  Configure server-wide parameters and instance-specific settings.
+
+The following content details the configuration of server-wide parameters and instance-specific settings in Red Hat Directory Server 13, presented in Antora AsciiDoc format.
+
+```asciidoc
+= Configure Server-Wide Parameters and Instance-Specific Settings
+:navtitle: Configure Settings
+:experimental:
+
+Directory Server 13 offers a robust configuration framework, allowing administrators to fine-tune both the global behavior of the directory server daemon and the specific operational characteristics of individual RHDS instances. Understanding the distinction between these two levels of configuration is crucial for effective management, performance tuning, and troubleshooting.
+
+== Understanding Server-Wide Parameters
+
+Server-wide parameters are settings that apply globally to the `dirsrv` daemon itself and, by extension, influence the behavior of all RHDS instances managed by that daemon on a particular host. These settings are typically found in the `dse.ldif` file within the server's configuration directory, but are best managed using the `dsconf` utility.
+
+These global parameters often relate to:
+
+*   **Global Logging:** Settings for the `dirsrv` process's main log files, log rotation policies, and debug levels that affect the overarching daemon operations.
+*   **Security Defaults:** Default certificate and key locations, or global security-related settings that might apply as a baseline for new instances.
+*   **Resource Limits:** Overall resource consumption limits or process behavior for the `dirsrv` daemon.
+
+Modifying server-wide parameters requires careful consideration, as changes can impact all directory server instances running on the host.
+
+=== Viewing Server-Wide Parameters
+
+You can view the current server-wide configuration using the `dsconf` command. This command queries the configuration stored in `cn=config` for the `dirsrv` daemon.
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> config get
+----
+
+Replace `password` with your Directory Manager password and `<SERVER_FQDN_OR_IP>` with the hostname or IP address of your RHDS server. If running on the same machine and using the default port (389), `-h <SERVER_FQDN_OR_IP>` and `-p 389` can often be omitted.
+
+For example, to view the global maximum number of log files:
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" localhost config get nsslapd-max-log-files
+----
+
+=== Modifying Server-Wide Parameters
+
+To change a server-wide parameter, use the `dsconf config set` command.
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> config set <PARAMETER>=<VALUE>
+----
+
+For instance, to set the global maximum number of debug log files to retain to `5`:
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" localhost config set nsslapd-max-log-files=5
+----
+
+*Important:* Some server-wide changes may require restarting the `dirsrv` service or individual instances to take full effect. Consult the Red Hat documentation for specific parameter requirements.
+
+== Understanding Instance-Specific Settings
+
+Instance-specific settings are parameters that apply only to a particular Red Hat Directory Server instance. Each RHDS instance maintains its own set of configurations, allowing for independent operation and customization. These settings are primarily managed through the `cn=config,cn=your_instance_name` entry in the directory.
+
+Common instance-specific settings include:
+
+*   **Network Ports:** The LDAP (e.g., 389) and LDAPS (e.g., 636) listening ports for that instance.
+*   **Suffixes (Databases):** The base DNs that define the scope of data managed by the instance and their associated backend databases.
+*   **Plugins:** Configuration for various plugins like password policy, memberOf, or referral management.
+*   **Replication Agreements:** Specific settings for how an instance replicates data with other directory servers.
+*   **Access Control Instructions (ACIs):** Rules that govern who can access what data within *that specific instance*.
+*   **Logging and Auditing:** Instance-specific log file paths, rotation policies, and auditing settings, distinct from the global daemon settings.
+
+Instance-specific configurations provide granular control, enabling administrators to tailor each RHDS instance to its unique role and requirements within an enterprise environment.
+
+=== Viewing Instance-Specific Settings
+
+To view instance-specific settings, you must specify the instance name using the `instance` subcommand with `dsconf`.
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> instance <INSTANCE_NAME> config get
+----
+
+Replace `<INSTANCE_NAME>` with the actual name of your RHDS instance (e.g., `dirsrv`).
+
+For example, to check the LDAP listening port for an instance named `dirsrv`:
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" localhost instance dirsrv config get nsslapd-port
+----
+
+=== Modifying Instance-Specific Settings
+
+To modify an instance-specific parameter, use `dsconf instance <INSTANCE_NAME> config set`.
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> instance <INSTANCE_NAME> config set <PARAMETER>=<VALUE>
+----
+
+For example, to change the LDAP port of the `dirsrv` instance to `3389`:
+
+[source,bash,subs="attributes+"]
+----
+dsconf -D "cn=Directory Manager" -w "password" localhost instance dirsrv config set nsslapd-port=3389
+----
+
+*Important:* Many instance-specific configuration changes, especially those related to network ports or database settings, require a restart of the affected RHDS instance to take effect. You can restart an instance using `dsctl instance <INSTANCE_NAME> restart`.
+
+== The `dsconf` Utility: A Deeper Dive
+
+The `dsconf` command-line utility is the primary tool for managing Red Hat Directory Server configuration. It interacts directly with the server's configuration entries, ensuring that changes are applied correctly and consistently.
+
+Key options for `dsconf`:
+
+*   `-D "cn=Directory Manager"`: Specifies the bind DN for authentication. `cn=Directory Manager` is the default administrative user.
+*   `-w "password"`: Provides the password for the bind DN. Using `-w` on the command line is generally discouraged for production environments due to security risks (password visible in process lists). Consider using `-W` to be prompted for the password, or storing it in a secure file.
+*   `-h <SERVER_FQDN_OR_IP>`: Specifies the hostname or IP address of the directory server. Defaults to `localhost`.
+*   `-p <PORT>`: Specifies the LDAP port to connect to. Defaults to `389`. If connecting to an LDAPS port, use `-p 636` (or your configured secure port) and potentially `--ldapstarttls` or `-Z` for TLS.
+*   `instance <INSTANCE_NAME>`: Used to target commands to a specific RHDS instance. Omit this for server-wide (global) configurations.
+
+Understanding these options is critical for successfully navigating and modifying your RHDS deployments.
+
+[#lab-configure-rhds-settings]
+== Hands-on Lab: Configure Server-Wide and Instance-Specific Settings
+
+This lab guides you through modifying both server-wide and instance-specific configurations of your Red Hat Directory Server instance.
+
+=== Objective
+
+*   Modify a global `dirsrv` daemon setting.
+*   Change an RHDS instance's default LDAP listening port.
+*   Add a new data suffix (database) to an existing RHDS instance.
+
+=== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance on RHEL 9.
+*   Root or `sudo` access to the server.
+*   The Directory Manager password for your instance.
+*   Replace `<SERVER_FQDN_OR_IP>` with your server's hostname or IP address.
+*   Replace `<YOUR_INSTANCE_NAME>` with the actual name of your RHDS instance (e.g., `dirsrv`).
+*   Replace `"password"` with your Directory Manager password.
+
+=== Steps
+
+. *Verify Current RHDS Instance Configuration*
++
+--
+Before making changes, let's verify the current LDAP listening port of your RHDS instance. By default, it's `389`.
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> instance <YOUR_INSTANCE_NAME> config get nsslapd-port
+```
+
+You can also check the global maximum log files setting:
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> config get nsslapd-max-log-files
+```
+--
+
+. *Modify a Server-Wide Log Rotation Setting*
++
+--
+Let's modify a server-wide setting, such as the maximum number of debug log files to retain. This setting applies globally to the `dirsrv` daemon and all its instances. We'll change it to `5` files.
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> config set nsslapd-max-log-files=5
+```
+
+Verify the change:
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> config get nsslapd-max-log-files
+```
+The output should now show `nsslapd-max-log-files: 5`.
+--
+
+. *Change an Instance's Default LDAP Port*
++
+--
+Now, let's change an instance-specific setting: the default LDAP port for your RHDS instance from `389` to `3389`.
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> instance <YOUR_INSTANCE_NAME> config set nsslapd-port=3389
+```
+
+This change requires a restart of the instance to take effect.
+
+```bash
+dsctl instance <YOUR_INSTANCE_NAME> restart
+```
+
+After the restart, verify the new port. *Crucially, you must now connect to the new port (3389) for `dsconf` commands if not on default.*
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> -p 3389 instance <YOUR_INSTANCE_NAME> config get nsslapd-port
+```
+
+You should see `nsslapd-port: 3389`. You can also use `ss -tlnp | grep 3389` to confirm the process is listening on the new port.
+--
+
+. *Add a New Suffix to the Instance*
++
+--
+Adding a new suffix (or database) is a common instance-specific configuration. Let's add a new suffix `dc=example,dc=com` backed by the default `userroot` backend.
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> -p 3389 suffix create --suffix "dc=example,dc=com" --backend userroot
+```
+
+Verify the new suffix has been added to your instance:
+
+```bash
+dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> -p 3389 suffix list
+```
+
+You should now see `dc=example,dc=com` in the list of suffixes.
+--
+
+. *Clean Up (Optional)*
++
+--
+To revert the changes made in this lab:
+
+*   **Revert Port to 389:**
+    ```bash
+    dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> -p 3389 instance <YOUR_INSTANCE_NAME> config set nsslapd-port=389
+    dsctl instance <YOUR_INSTANCE_NAME> restart
+    ```
+    After restart, remember to use `-p 389` (or omit `-p`) for subsequent `dsconf` commands.
+
+*   **Remove Suffix `dc=example,dc=com`:**
+    ```bash
+    dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> suffix delete --suffix "dc=example,dc=com"
+    ```
+    (Note: If you just reverted the port, you can omit `-p 389` or use `-p 389` explicitly).
+
+*   **Revert `nsslapd-max-log-files` to its original value (e.g., `0` for no limit or a default like `1`):**
+    ```bash
+    dsconf -D "cn=Directory Manager" -w "password" <SERVER_FQDN_OR_IP> config set nsslapd-max-log-files=0
+    ```
+--
+```

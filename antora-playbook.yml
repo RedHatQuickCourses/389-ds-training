@@ -1,6 +1,6 @@
 site:
-  title: FIXME Course Title
-  start_page: REPLACEREPONAME::index.adoc
+  title:  Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
+  start_page: 389-ds-training::index.adoc
 
 content:
   sources:

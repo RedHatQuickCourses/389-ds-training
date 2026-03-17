@@ -1,0 +1,199 @@
+#  Implement attribute indexing to optimize search performance.
+
+= Configure Advanced Server Settings and Performance
+:navtitle: Indexing for Performance
+
+[[indexing-for-performance]]
+== Implement Attribute Indexing to Optimize Search Performance
+
+Directory servers, like Red Hat Directory Server (RHDS), are fundamentally designed for rapid lookup of information. However, without proper optimization, certain types of searches can become slow, especially in large directories. Attribute indexing is a critical technique to significantly improve the performance of LDAP search operations.
+
+=== What is Attribute Indexing?
+
+In the context of RHDS and LDAP, attribute indexing is the process of creating specialized data structures (similar to indexes in a relational database) for specific attributes within the directory. These indexes allow the server to quickly locate entries that contain a particular attribute value without having to scan the entire directory subtree.
+
+When an LDAP client performs a search operation, the server first checks if an index exists for the attribute specified in the search filter. If an index is present, the server can use it to directly identify the matching entries, dramatically reducing the time and computational resources required for the search. Without an index, the server might have to perform a "full table scan" (or rather, a full directory subtree scan), which can be very inefficient for large datasets.
+
+=== Why is Indexing Necessary?
+
+Consider a scenario where you need to find all users whose `description` attribute contains "Marketing Department". Without an index on the `description` attribute, RHDS would have to examine the `description` attribute of *every single entry* within the searched base DN to find matches. This is a very resource-intensive operation.
+
+With an index, RHDS can quickly look up entries based on their `description` attribute value, much like looking up a word in the index of a book rather than reading the entire book to find it. This is especially crucial for:
+
+*   **Large Directories**: As the number of entries grows, the performance degradation without indexes becomes more pronounced.
+*   **Frequent Searches**: Attributes used in common search filters (e.g., `uid`, `cn`, `mail`, `description`) are prime candidates for indexing.
+*   **Complex Filters**: While indexes primarily help with specific attribute value lookups, they can also indirectly speed up more complex filters by narrowing down the initial set of entries.
+
+=== Types of Indexes in RHDS
+
+RHDS supports several types of indexes, each optimized for different search filter types:
+
+*   `eq` (Equality Index):
+    *   Used for equality searches (`attribute=value`).
+    *   *Example*: `(uid=jdoe)`, `(mail=jdoe@example.com)`
+    *   This is the most common and generally most beneficial type of index.
+
+*   `pres` (Presence Index):
+    *   Used for presence searches (`(attribute=*)`).
+    *   *Example*: `(description=*)` (find all entries that have a `description` attribute).
+
+*   `sub` (Substring Index):
+    *   Used for substring searches (`attribute=*value*`, `attribute=value*`, `attribute=*value`).
+    *   *Example*: `(cn=*smith*)`
+    *   Substring indexes can be resource-intensive to build and maintain, and they consume more disk space than equality indexes. Use them judiciously for attributes that genuinely require substring searches.
+
+*   `approx` (Approximate Index):
+    *   Used for approximate searches (`attribute~=value`).
+    *   *Example*: `(sn~=smth)` (find entries where the surname is approximately "smith").
+    *   Useful for handling minor spelling variations.
+
+*   `order` (Ordering Index):
+    *   Used for ordering results based on the attribute's value.
+    *   *Example*: When an LDAP client requests results sorted by `sn`.
+
+=== Impact on Write Operations
+
+While indexes dramatically improve read (search) performance, they introduce a slight overhead for write (add, modify, delete) operations. When an entry is added, modified, or deleted, RHDS must also update the corresponding indexes. This overhead is generally minor and acceptable for most directory server workloads, where reads typically far outnumber writes.
+
+=== Best Practices for Indexing
+
+*   **Index Frequently Searched Attributes**: Prioritize attributes that are commonly used in search filters by client applications.
+*   **Use `eq` Index Primarily**: The equality index is the most efficient and widely applicable. Start with `eq` unless a specific search pattern (e.g., substring) necessitates another type.
+*   **Be Selective with `sub` Indexes**: Substring indexes consume more resources. Only create them for attributes where substring searches are genuinely common and performance-critical.
+*   **Monitor Performance**: Use RHDS monitoring tools to identify slow searches and determine if additional indexing is required.
+*   **Rebuild Indexes After Changes**: After adding a new index or modifying an existing one, you *must* rebuild the index for it to apply to existing data. New data written after the index is created will automatically be indexed.
+
+[[lab-optimize-with-indexing]]
+=== Hands-on Lab: Optimize Server Performance Through Indexing
+
+In this lab, you will learn how to identify existing indexes, add a new index to an attribute, rebuild the index, and verify its configuration.
+
+==== Scenario
+
+You have an RHDS instance managing user accounts. Users frequently search for entries based on a custom `description` attribute, which is currently not indexed, leading to slow search times. You need to add an equality index for the `description` attribute in your `example.com` suffix.
+
+==== Prerequisites
+
+*   A running Red Hat Directory Server 13 instance.
+*   Access to the RHDS server's command line with administrative privileges.
+*   An LDAP entry that contains a `description` attribute in your primary suffix (e.g., `dc=example,dc=com`).
+
+==== Lab Steps
+
+.  **Connect to your RHDS Instance**
+    Ensure you are logged into your RHEL server where RHDS is installed.
++
+[source,bash]
+----
+# su - dsuser
+----
++
+Replace `dsuser` with the user you typically use to manage RHDS, or use `root` if necessary.
+
+.  **Identify Your RHDS Instance and Suffix**
+    If you're unsure of your instance name or suffix, you can list them.
++
+[source,bash]
+----
+# dsconf list-instances # To find your instance name, e.g., 'instance1'
+# dsconf instance1 suffix list # To find your configured suffixes, e.g., 'dc=example,dc=com'
+----
++
+For this lab, let's assume your instance is `instance1` and your suffix is `dc=example,dc=com`.
+
+.  **Verify an Entry with the `description` Attribute**
+    Before indexing, ensure you have at least one entry that contains the `description` attribute so you can test searches later. If you don't, add or modify one.
++
+[source,bash]
+----
+# ldapsearch -x -H ldap://localhost:389 -b "dc=example,dc=com" "(objectclass=*)" description
+----
++
+If no entries appear or no entry has a `description` attribute, you can add or modify one. For example, to modify an existing user:
++
+[source,bash]
+----
+# vi add_desc.ldif
+----
++
+Add the following content to `add_desc.ldif`, adjusting the DN if `uid=johndoe,ou=People` doesn't exist in your directory:
++
+[source,ldif]
+----
+dn: uid=johndoe,ou=People,dc=example,dc=com
+changetype: modify
+add: description
+description: This is a test description for John Doe.
+----
++
+Then apply it:
++
+[source,bash]
+----
+# ldapmodify -x -H ldap://localhost:389 -D "cn=Directory Manager" -W -f add_desc.ldif
+----
++
+Enter your Directory Manager password when prompted.
+
+.  **Check Current Indexes for the Suffix**
+    Use `dsconf` to list all attributes that are currently indexed for your suffix (`dc=example,dc=com`).
++
+[source,bash]
+----
+# dsconf instance1 suffix get --suffix "dc=example,dc=com" indexed-attributes
+----
++
+Observe the output. You will likely see `cn`, `uid`, `objectclass`, etc., but `description` should not be listed with an `eq` index type yet.
+
+.  **Add an Equality Index for the `description` Attribute**
+    Now, add an equality index (`eq`) for the `description` attribute to your suffix.
++
+[source,bash]
+----
+# dsconf instance1 suffix add-indexed-attributes --suffix "dc=example,dc=com" --attr description --index-type eq
+----
++
+You should receive a confirmation message indicating the index has been added.
+
+.  **Rebuild the Index**
+    After adding an index, you *must* rebuild the index for it to apply to existing data in the directory. New entries created *after* the index addition will be automatically indexed, but existing entries need a rebuild.
++
+[source,bash]
+----
+# dsconf instance1 suffix rebuild-index --suffix "dc=example,dc=com" --attr description
+----
++
+This operation might take some time depending on the size of your directory and the attribute being indexed. You will see a message indicating the rebuild has started.
+
+.  **Verify the New Index**
+    Check the indexed attributes again to confirm that `description` is now listed with an `eq` index.
++
+[source,bash]
+----
+# dsconf instance1 suffix get --suffix "dc=example,dc=com" indexed-attributes
+----
++
+You should now see `description` among the indexed attributes, typically shown with its index type (e.g., `description (eq)`).
+
+.  **Perform a Search Using the Indexed Attribute**
+    Execute an LDAP search using the `description` attribute. While you won't visually see a "speed improvement" in a small lab environment, understand that this search is now leveraging the index.
++
+[source,bash]
+----
+# ldapsearch -x -H ldap://localhost:389 -b "dc=example,dc=com" "(description=*test*)" description
+----
++
+This search should return the `johndoe` entry (or any other entry you've populated with a matching description).
+
+.  **Optional: Remove the Index**
+    If you wish to clean up or practice removing an index, use the following command. Note that removing an index also requires a rebuild to clean up the index files associated with it.
++
+[source,bash]
+----
+# dsconf instance1 suffix delete-indexed-attributes --suffix "dc=example,dc=com" --attr description --index-type eq
+# dsconf instance1 suffix rebuild-index --suffix "dc=example,dc=com" --attr description
+----
++
+Verify by listing indexed attributes again. The `description` attribute should no longer appear as indexed.
+
+This lab demonstrates the fundamental steps involved in implementing attribute indexing to optimize search performance in Red Hat Directory Server 13. By strategically applying indexes, you can ensure your directory server remains responsive and efficient, even as your directory scales.

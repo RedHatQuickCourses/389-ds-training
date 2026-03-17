@@ -1,0 +1,351 @@
+#  Configure logging and auditing for compliance and troubleshooting.
+
+= Configure Logging and Auditing for Compliance and Troubleshooting
+
+[role="summary"]
+This section details how to configure comprehensive logging and auditing in Red Hat Directory Server 13. Proper logging is crucial for monitoring server operations, diagnosing issues, and ensuring compliance with regulatory requirements by maintaining an immutable record of directory activities.
+
+== Introduction to RHDS Logging and Auditing
+
+Red Hat Directory Server (RHDS) generates various log files that provide invaluable insights into its operations, security events, and data changes. These logs are essential for:
+
+*   **Troubleshooting**: Identifying errors, performance bottlenecks, and misconfigurations.
+*   **Security Monitoring**: Detecting unauthorized access attempts, suspicious activities, and changes to critical directory data.
+*   **Compliance and Auditing**: Providing an immutable record of all significant operations, especially data modifications, to meet regulatory compliance requirements (e.g., GDPR, HIPAA, PCI DSS).
+
+Understanding the different types of logs and how to configure them effectively is a fundamental skill for any RHDS administrator.
+
+=== RHDS Log Types
+
+Red Hat Directory Server primarily generates the following types of logs:
+
+==== Error Logs (`errors`)
+
+The `errors` log file records events related to the server's internal operations, startup/shutdown sequences, configuration issues, and severe operational problems. This log is the first place to look when the server is not starting, behaving unexpectedly, or reporting internal errors.
+
+*   **Purpose**: To record internal server errors, warnings, and informational messages about the server's health and state.
+*   **Content**: Messages about failed binds, resource exhaustion, database corruption, plugin errors, replication failures, and other critical system events.
+*   **Default Location**: `_RHDSPATH_/logs/errors` (e.g., `/etc/dirsrv/slapd-INSTANCE_NAME/logs/errors`)
+
+==== Access Logs (`access`)
+
+The `access` log records every client interaction with the directory server. This includes connection attempts, successful and failed bind operations, search queries, and attempts to add, modify, or delete entries. It provides a detailed account of who accessed what and when.
+
+*   **Purpose**: To track client requests, authentication attempts, and operations performed on the directory.
+*   **Content**:
+    *   Connection information (client IP, port).
+    *   Bind operations (authentication success/failure, user DN).
+    *   Search operations (base DN, scope, filter, attributes requested, number of entries returned).
+    *   Modification operations (add, modify, delete, rename).
+    *   Extended operations.
+*   **Importance**: Critical for security audits, usage statistics, and identifying potential misuse or unauthorized access patterns.
+*   **Default Location**: `_RHDSPATH_/logs/access` (e.g., `/etc/dirsrv/slapd-INSTANCE_NAME/logs/access`)
+
+==== Audit Logs (`audit`)
+
+The `audit` log is specifically designed for compliance and security auditing. Unlike the `access` log, which records *attempts*, the `audit` log provides detailed, unalterable records of *successful* and *failed* data modification operations. It contains more granular information about the actual changes made to directory entries.
+
+*   **Purpose**: To provide a verifiable and tamper-proof record of all data modifications (add, modify, delete) within the directory, crucial for regulatory compliance.
+*   **Content**: For each audited operation, it typically includes:
+    *   Timestamp.
+    *   Client IP and authenticated user DN.
+    *   The target entry's DN.
+    *   Detailed information about the attributes affected, including old and new values for modify operations.
+    *   Whether the operation succeeded or failed.
+*   **Distinction from Access Logs**: While access logs show *that* an operation was attempted, audit logs show *what specifically changed* (e.g., the exact attribute values modified) and are typically less verbose for non-modifying operations.
+*   **Compliance Significance**: Essential for demonstrating accountability and traceability of data changes.
+*   **Default Location**: `_RHDSPATH_/logs/audit` (e.g., `/etc/dirsrv/slapd-INSTANCE_NAME/logs/audit`)
+
+==== Change Logs (`changelog`)
+
+The `changelog` is a special log that records all directory modifications in a format suitable for replication. While not typically viewed directly by administrators for troubleshooting or auditing (the `audit` log serves that purpose better), it's fundamental to how RHDS replicates data to consumer replicas.
+
+*   **Purpose**: To record all directory modifications in a sequential manner, allowing replication consumers to synchronize their data with the supplier.
+*   **Content**: A stream of LDIF-formatted change records (add, modify, delete) representing every alteration to the directory.
+*   **Relation to Replication**: When replication is configured, consumer replicas consult the supplier's change log to pull updates and synchronize their local directory databases.
+*   **Default Location**: Stored within the directory server's database (e.g., `cn=changelog`).
+
+== Configuring Logging Parameters
+
+Logging parameters for RHDS can be configured using the `dsconf` command-line utility. This allows administrators to enable/disable logs, set logging levels, and manage log rotation.
+
+=== Global Log Settings
+
+You can view and modify global log settings, which affect all log files.
+
+To list current log settings for an instance:
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log list
+```
+
+=== Configuring Access Log
+
+The verbosity of the access log can be adjusted using logging levels. Higher levels provide more detail but generate larger log files.
+
+*   `0`: No logging
+*   `1`: Critical errors, binds, unbinds
+*   `8`: Searches, adds, modifies, deletes
+*   `16`: Internal server errors, database operations
+*   `32`: Connection details
+*   `64`: Replication details
+*   `128`: Advanced debugging (very verbose)
+
+To set the access log level to `8` (standard operations):
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log set --access-level 8
+```
+
+To enable the access log (it's usually enabled by default):
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log set --access-log-enabled on
+```
+
+=== Configuring Error Log
+
+The error log is usually less configurable in terms of verbosity, but you can manage its state.
+
+To enable the error log (usually enabled by default):
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log set --error-log-enabled on
+```
+
+=== Log Rotation
+
+Regular log rotation is essential to prevent log files from growing indefinitely and consuming all available disk space. RHDS offers internal log rotation capabilities configured via `dsconf`.
+
+To configure log rotation for the access log:
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log set --access-rotation-enabled on --access-rotation-interval 7d --access-rotation-size 100M --access-rotation-compress on
+```
+This command configures the access log to rotate every 7 days or when it reaches 100MB, and to compress rotated logs.
+
+Alternatively, you can integrate with the system's `logrotate` utility, which provides more advanced features like post-rotation scripts (e.g., restarting a service or sending alerts). A typical `logrotate` configuration for RHDS logs would look like this (usually found in `/etc/logrotate.d/dirsrv`):
+
+```logrotate
+/var/log/dirsrv/slapd-INSTANCE_NAME/*.log {
+    compress
+    dateext
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        /usr/bin/systemctl reload slapd@INSTANCE_NAME.service > /dev/null 2>&1 || true
+    endscript
+}
+```
+*   `compress`: Compresses old log files.
+*   `dateext`: Appends the rotation date to the log file name.
+*   `missingok`: Ignores errors if the log file is missing.
+*   `notifempty`: Does not rotate if the log file is empty.
+*   `sharedscripts`: Runs the `postrotate` script once for all matched log files, not per file.
+*   `postrotate`/`endscript`: Commands to be executed after rotation. `systemctl reload slapd@INSTANCE_NAME.service` signals RHDS to reopen its log files, preventing logging to a rotated (and now empty) file.
+
+== Implementing Auditing
+
+The audit log is an important component for regulatory compliance. It needs to be explicitly enabled and configured for optimal effectiveness.
+
+To enable the audit log:
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log set --audit-log-enabled on
+```
+
+You can configure the audit log to record successful operations, failed operations, or both. For compliance, it's generally recommended to audit both.
+
+To set the audit log to record both successful and failed operations:
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log set --audit-log-success-enabled on --audit-log-failure-enabled on
+```
+
+To enable rotation for the audit log, similar to access logs:
+```bash
+dsconf -D "cn=directory manager" ldap://localhost:389 log set --audit-rotation-enabled on --audit-rotation-interval 7d --audit-rotation-size 100M --audit-rotation-compress on
+```
+
+=== Analyzing Audit Entries
+
+Audit log entries are detailed and structured, providing comprehensive information about each modification. For example, a modify operation might show the old and new values of an attribute.
+
+Example audit log entry (simplified):
+```
+[25/Jan/2024:10:30:45.123456789 -0500] conn=5 op=2 ADD dn="uid=testuser,ou=People,dc=example,dc=com"
+[25/Jan/2024:10:30:45.567890123 -0500] conn=6 op=3 MOD dn="uid=testuser,ou=People,dc=example,dc=com" - old attribute: sn=Test, new attribute: sn=User
+```
+
+== Hands-on Lab: Configure Logging and Auditing
+
+In this lab, you will deploy an RHDS instance, examine its default logs, adjust logging levels, and enable and configure the audit log for compliance.
+
+=== Prerequisites
+
+*   A running RHEL 9 system with `redhat-directory-server` packages installed.
+*   An RHDS instance created and initialized (e.g., using `dscreate`). This lab assumes your instance name is `myinstance`.
+*   Administrative access to the RHDS instance (e.g., `cn=directory manager`).
+
+=== Activity 1: Examining Default Log Files
+
+1.  **Locate the instance logs directory:**
+    The logs for your instance are typically found under `/etc/dirsrv/slapd-INSTANCE_NAME/logs/`.
+    Substitute `myinstance` with your actual instance name.
+
+    ```bash
+    ls -l /etc/dirsrv/slapd-myinstance/logs/
+    ```
+    You should see files like `access`, `errors`, and potentially others.
+
+2.  **View the `errors` log:**
+    Examine the `errors` log for any startup messages or previous errors.
+
+    ```bash
+    sudo tail -f /etc/dirsrv/slapd-myinstance/logs/errors
+    ```
+    (Press `Ctrl+C` to exit `tail -f`)
+
+3.  **View the `access` log:**
+    Examine the `access` log. At this point, it might contain only connection and bind entries if you haven't performed many operations.
+
+    ```bash
+    sudo tail -f /etc/dirsrv/slapd-myinstance/logs/access
+    ```
+
+=== Activity 2: Adjusting Access Log Verbosity
+
+By default, the access log might not capture all search parameters. Let's increase its verbosity.
+
+1.  **Check the current access log level:**
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log list | grep access-level
+    ```
+    The default is often `8`.
+
+2.  **Set the access log level to `64` (including replication details, useful for general troubleshooting):**
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log set --access-level 64
+    ```
+
+    You might be prompted for the Directory Manager password.
+
+3.  **Verify the change:**
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log list | grep access-level
+    ```
+    It should now show `access-level: 64`.
+
+4.  **Perform an LDAP operation to generate new log entries:**
+    Let's perform a simple search.
+
+    ```bash
+    ldapsearch -x -H ldap://localhost:389 -b "dc=example,dc=com" "cn=Directory Manager"
+    ```
+
+5.  **Observe the `access` log:**
+    Check the `access` log again. You might notice more detailed entries for the search operation.
+
+    ```bash
+    sudo tail -n 20 /etc/dirsrv/slapd-myinstance/logs/access
+    ```
+
+=== Activity 3: Enabling and Configuring Audit Logging
+
+The audit log is crucial for compliance. It's often disabled by default and needs to be explicitly configured.
+
+1.  **Check the current audit log status:**
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log list | grep audit-log-enabled
+    ```
+    It should likely show `audit-log-enabled: off`.
+
+2.  **Enable the audit log and set it to record successful and failed operations:**
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log set --audit-log-enabled on --audit-log-success-enabled on --audit-log-failure-enabled on
+    ```
+
+3.  **Verify the audit log configuration:**
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log list | grep audit-log-enabled
+    dsconf -D "cn=directory manager" ldap://localhost:389 log list | grep audit-log-success-enabled
+    dsconf -D "cn=directory manager" ldap://localhost:389 log list | grep audit-log-failure-enabled
+    ```
+    All three should now show `on`.
+
+4.  **Perform a modification operation to generate an audit entry:**
+    First, let's add a user entry.
+
+    ```bash
+    # Create a temporary LDIF file
+    cat <<EOF > /tmp/newuser.ldif
+    dn: uid=audituser,ou=People,dc=example,dc=com
+    objectClass: top
+    objectClass: person
+    objectClass: organizationalPerson
+    objectClass: inetOrgPerson
+    uid: audituser
+    cn: Audit User
+    sn: User
+    mail: audituser@example.com
+    userPassword: password
+    EOF
+
+    # Add the user
+    ldapadd -x -D "cn=directory manager" -w your_directory_manager_password -H ldap://localhost:389 -f /tmp/newuser.ldif
+    ```
+    Replace `your_directory_manager_password` with your actual password.
+
+5.  **Modify the user's surname:**
+
+    ```bash
+    cat <<EOF > /tmp/moduser.ldif
+    dn: uid=audituser,ou=People,dc=example,dc=com
+    changetype: modify
+    replace: sn
+    sn: NewUserSurname
+    EOF
+
+    ldapmodify -x -D "cn=directory manager" -w your_directory_manager_password -H ldap://localhost:389 -f /tmp/moduser.ldif
+    ```
+
+6.  **Delete the user entry:**
+
+    ```bash
+    ldapdelete -x -D "cn=directory manager" -w your_directory_manager_password -H ldap://localhost:389 "uid=audituser,ou=People,dc=example,dc=com"
+    ```
+
+7.  **View the `audit` log:**
+    Now, check the newly created `audit` log file.
+
+    ```bash
+    sudo tail -n 20 /etc/dirsrv/slapd-myinstance/logs/audit
+    ```
+    You should see detailed entries for the `ADD`, `MOD`, and `DEL` operations you performed, including the DN, the client IP, and for the `MOD` operation, the change to the `sn` attribute.
+
+=== Activity 4: Understanding Log Rotation
+
+While we won't set up `logrotate` for the entire system in this lab, you'll configure RHDS's internal log rotation.
+
+1.  **Configure internal rotation for the access log:**
+    Set the access log to rotate every day (1d) or when it reaches 10MB.
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log set --access-rotation-enabled on --access-rotation-interval 1d --access-rotation-size 10M --access-rotation-compress on
+    ```
+
+2.  **Configure internal rotation for the audit log:**
+    Similarly, set the audit log to rotate every day or when it reaches 10MB.
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log set --audit-rotation-enabled on --audit-rotation-interval 1d --audit-rotation-size 10M --audit-rotation-compress on
+    ```
+
+3.  **Verify log rotation settings:**
+
+    ```bash
+    dsconf -D "cn=directory manager" ldap://localhost:389 log list | grep rotation
+    ```
+    You should see `access-rotation-enabled: on`, `access-rotation-interval: 1d`, etc., for both access and audit logs.
+
+This concludes the lab on configuring logging and auditing. You now understand how to monitor server activities and maintain compliance records within Red Hat Directory Server 13.

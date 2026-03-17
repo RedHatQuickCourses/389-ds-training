@@ -1,0 +1,7 @@
+#  Install and Configure Red Hat Directory Server 13
+
+* xref:installation.adoc#system-requirements[System requirements] for RHDS 13 on RHEL 9.
+* Install required RHDS 13 packages.
+* Initialize new RHDS instances using the `dscreate` utility.
+* Configure the server using `dsconf` and `dsidm`.
+* Manage the RHDS instance lifecycle (start, stop, restart) with `dsctl`.

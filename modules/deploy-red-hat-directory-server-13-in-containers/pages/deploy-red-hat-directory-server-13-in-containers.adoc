@@ -1,0 +1,11 @@
+#  Deploy Red Hat Directory Server 13 in Containers
+
+=== Deploy Red Hat Directory Server 13 in Containers
+
+This topic covers deploying RHDS 13 within containers using Podman, leveraging official Red Hat registry images. It includes:
+
+*   Understanding containerization fundamentals.
+*   Deploying RHDS 13 instances using container images.
+*   Configuring persistent storage for containerized data.
+*   Implementing networking solutions for containerized directory servers.
+*   Managing the lifecycle of containerized RHDS instances.

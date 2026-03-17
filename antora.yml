@@ -1,10 +1,28 @@
-name: REPLACEREPONAME
-title: FIXME Course Title
-version: 1
+name: 389-ds-training
+title:  Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
+version: 1.0.0
 nav:
 - modules/ROOT/nav.adoc
 - modules/LABENV/nav.adoc
-- modules/chapter1/nav.adoc
-- modules/chapter2/nav.adoc
-- modules/chapter3/nav.adoc
+
+- modules/understand-directory-services-and-ldap-fundamentals/nav.adoc
+
+- modules/install-and-configure-red-hat-directory-server-13/nav.adoc
+
+- modules/manage-directory-data-and-schema/nav.adoc
+
+- modules/configure-advanced-server-settings-and-performance/nav.adoc
+
+- modules/implement-security-for-red-hat-directory-server-13/nav.adoc
+
+- modules/deploy-and-manage-rhds-replication/nav.adoc
+
+- modules/manage-password-policies/nav.adoc
+
+- modules/deploy-red-hat-directory-server-13-in-containers/nav.adoc
+
+- modules/troubleshoot-and-maintain-red-hat-directory-server-13/nav.adoc
+
+- modules/address-advanced-scenarios-and-best-practices/nav.adoc
+
 - modules/appendix/nav.adoc

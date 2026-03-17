@@ -1,0 +1,150 @@
+#  Outline the basic architecture of Red Hat Directory Server 13.
+
+= Basic Architecture of Red Hat Directory Server 13
+
+Red Hat Directory Server (RHDS) 13 is a powerful, highly scalable, and robust directory service based on the open-source 389 Directory Server project. Understanding its fundamental architecture is crucial for effective administration, configuration, and troubleshooting. At its core, RHDS provides a centralized repository for user, group, and other network resource information, making it accessible through the Lightweight Directory Access Protocol (LDAP).
+
+== Core Architectural Components
+
+The architecture of Red Hat Directory Server 13 can be broken down into several key components that work in concert to deliver directory services:
+
+=== 1. Directory Server Daemon (`slapd`)
+
+The `slapd` (Standalone LDAP Daemon) is the heart of RHDS. It is the main process that listens for incoming LDAP client requests, processes them, and interacts with the backend databases. This daemon is responsible for:
+
+*   **Handling LDAP Operations:** Managing `bind`, `search`, `add`, `modify`, `delete` requests.
+*   **Enforcing Security:** Applying Access Control Instructions (ACIs), handling authentication and encryption (TLS/SSL).
+*   **Executing Plugins:** Loading and running various server-side plugins that extend functionality.
+*   **Managing Replication:** Coordinating data synchronization with other directory server instances.
+
+=== 2. Backend Databases
+
+RHDS uses highly optimized database backends to store directory data efficiently. Each distinct set of directory data, known as a *suffix* or *naming context*, is typically backed by its own database instance.
+
+*   **LMDB (Lightning Memory-Mapped Database):** This is the modern, default, and recommended backend for RHDS 13. LMDB is a B+ tree-based transactional key-value store known for its high performance, reliability, and minimal resource consumption, especially under heavy write loads. It provides atomic, consistent, isolated, and durable (ACID) properties.
+*   **DBM (Database Manager):** While LMDB is preferred, older RHDS versions might have used DBM-style databases. RHDS 13 primarily leverages LMDB.
+
+Each database instance is essentially a collection of files on the filesystem where entries and attributes are stored, indexed, and managed.
+
+=== 3. Configuration Directory (`cn=config`)
+
+RHDS manages its own operational configuration as a special LDAP tree, often referred to as `cn=config`. This approach means that the server's configuration parameters (e.g., port numbers, database settings, plugin configurations, replication agreements, password policies) are stored as LDAP entries within the directory itself.
+
+*   **Dynamic Configuration:** Changes made to `cn=config` are often applied dynamically without requiring a server restart, making administration flexible.
+*   **LDAP Access:** Administrators use standard LDAP tools or specialized RHDS utilities (`dsconf`, `dsidm`) to interact with `cn=config` entries, allowing programmatic configuration management.
+
+=== 4. Plugins
+
+RHDS's extensibility comes from its robust plugin architecture. Plugins are shared libraries loaded by the `slapd` daemon that extend its core functionality. They can intercept LDAP operations at various stages and perform custom actions. Examples of common plugins include:
+
+*   **Referral Plugin:** Directs clients to other directory servers for specific naming contexts.
+*   **Password Policy Plugin:** Enforces password complexity, aging, and lockout rules.
+*   **Replication Plugin:** Manages data synchronization between directory server instances.
+*   **Access Control Plugin:** Evaluates and enforces ACIs.
+*   **Retro Changelog Plugin:** Maintains a history of changes for replication and auditing.
+*   **Referential Integrity Plugin:** Ensures that entries referenced by other entries (e.g., group members) actually exist.
+
+=== 5. Replication
+
+For high availability, scalability, and disaster recovery, RHDS supports replication. This mechanism allows directory data to be synchronized across multiple RHDS instances.
+
+*   **Multi-Supplier Replication (formerly Multi-Master):** Allows multiple directory servers to accept write operations, with changes being replicated to all other suppliers. This provides high availability for writes.
+*   **Consumer Replicas:** Read-only copies of the directory, primarily used for distributing read load and providing redundancy.
+*   **Replication Agreements:** Define the relationship between replicas, specifying which data to replicate, the schedule, and security settings.
+
+=== 6. Administrative Tools
+
+Red Hat Directory Server provides a suite of command-line tools for installation, configuration, management, and monitoring:
+
+*   `dscreate`: Used to create and initialize new RHDS instances.
+*   `dsconf`: A versatile tool for configuring server-wide parameters, plugins, suffixes, and more.
+*   `dsidm`: Manages identity-related tasks, such as user and group administration within a specific instance.
+*   `dsctl`: Controls the lifecycle of an RHDS instance (start, stop, restart, status).
+*   `ldapsearch`, `ldapadd`, `ldapmodify`, `ldapdelete`: Standard OpenLDAP client utilities for interacting with directory data.
+*   `ldifde`, `ldifsearch`: Utilities for importing/exporting data using LDIF files.
+
+=== 7. Operating System Interaction
+
+RHDS is designed to run on Red Hat Enterprise Linux (RHEL). It leverages various OS services and features:
+
+*   **Filesystem:** Stores database files, configuration files, log files, and certificates.
+*   **Networking:** Binds to specific ports (389 for LDAP, 636 for LDAPS) to listen for client connections.
+*   **Systemd:** RHDS instances are managed as systemd services, allowing for consistent startup, shutdown, and status monitoring.
+*   **System Resources:** Utilizes CPU, memory, and I/O resources for its operations.
+
+== Architectural Overview Diagram
+
+[plantuml, rhds-architecture, svg]
+----
+@startuml
+skinparam handwritten true
+skinparam backgroundColor #EEEEDD
+
+title Red Hat Directory Server 13 - Basic Architecture
+
+cloud "LDAP Clients" as clients {
+  agent "Applications" as app
+  agent "Users (ldapsearch)" as user
+}
+
+rectangle "Red Hat Directory Server Instance" as rhds {
+  component "slapd Daemon (Core Engine)" as slapd {
+    collections "Request Processor" as req_proc
+    collections "Security Enforcer (ACIs, AuthN/Z)" as sec_enforcer
+    collections "Plugin Manager" as plugin_mgr
+  }
+
+  folder "Configuration Directory (cn=config)" as config_dir {
+    file "Server Settings" as settings
+    file "Plugin Configs" as plugin_configs
+    file "Replication Agreements" as repl_agreements
+    file "Password Policies" as pw_policies
+  }
+
+  database "Backend Databases" as backends {
+    storage "Suffix A (e.g., dc=example,dc=com)" as suffix_a {
+      collections "LMDB Files" as lmdb_a
+      collections "Indices" as indices_a
+    }
+    storage "Suffix B (e.g., ou=people,dc=example,dc=com)" as suffix_b {
+      collections "LMDB Files" as lmdb_b
+      collections "Indices" as indices_b
+    }
+  }
+
+  collections "Server Plugins" as plugins {
+    artifact "Replication Plugin" as repl_plugin
+    artifact "Password Policy Plugin" as pw_plugin
+    artifact "ACI Plugin" as aci_plugin
+    artifact "Referential Integrity Plugin" as ref_int_plugin
+    artifact "Retro Changelog Plugin" as retro_plugin
+  }
+
+  collections "Admin Utilities" as admin_tools {
+    artifact "dscreate" as dscreate
+    artifact "dsconf" as dsconf
+    artifact "dsidm" as dsidm
+    artifact "dsctl" as dsctl
+    artifact "ldapsearch/add/modify" as ldap_cli
+  }
+
+  cloud "Other RHDS Instances (for Replication)" as other_rhds {
+      agent "Replica A" as replica_a
+      agent "Replica B" as replica_b
+  }
+}
+
+clients -- (slapd) : LDAP/LDAPS Requests (Port 389/636)
+slapd --> req_proc
+req_proc --> sec_enforcer : Enforce Access
+sec_enforcer --> plugin_mgr : Invoke Plugins
+plugin_mgr --> plugins : Extend Functionality
+plugin_mgr --> backends : Read/Write Data
+backends --> config_dir : Read/Store Configuration
+admin_tools --> config_dir : Manage Configuration
+admin_tools --> slapd : Control Instance
+slapd <--> other_rhds : Replication Protocol
+
+@enduml
+----
+This diagram illustrates how client requests flow into the `slapd` daemon, which then interacts with plugins, enforces security, and ultimately reads from or writes to the backend databases. The configuration itself is managed within a special directory entry, and administrative tools provide the interface for managing all these components. Replication ensures data consistency across multiple instances.

@@ -1,0 +1,315 @@
+#  Perform LDAP data manipulation operations (add, modify, delete entries) using command-line tools.
+
+= Manage Directory Data: LDAP Manipulation with Command-Line Tools
+
+This section explores the fundamental operations for managing directory data within Red Hat Directory Server (RHDS) 13 using standard LDAP command-line utilities. As a directory service, RHDS stores information in a hierarchical structure of entries, each identified by a unique Distinguished Name (DN) and composed of various attributes. Efficiently adding, modifying, and deleting these entries is crucial for directory administration.
+
+We will focus on the `ldapadd`, `ldapmodify`, and `ldapdelete` commands, which allow administrators to interact with the directory programmatically or via scripting, often leveraging Linkage Directory Interchange Format (LDIF) files for bulk operations or complex changes.
+
+== Perform LDAP Data Manipulation Operations
+
+Directory data manipulation involves the lifecycle of an entry: its creation, subsequent updates to its attributes, and eventual removal. Understanding how to perform these operations using command-line tools is a cornerstone of RHDS administration.
+
+In this section, you will learn to:
+
+*   Add new entries to the directory.
+*   Modify existing entries, including adding, replacing, or deleting specific attributes.
+*   Delete entries from the directory.
+
+All these operations will be demonstrated using `ldapadd`, `ldapmodify`, and `ldapdelete` in conjunction with LDIF files, a standard plain-text format for representing LDAP entries and operations.
+
+=== Add New Directory Entries with `ldapadd`
+
+Adding new entries is the first step in populating your directory. Entries are added as leaf nodes under existing parent entries, forming the hierarchical structure of the directory tree.
+
+==== Technical Explanation: `ldapadd` and LDIF
+
+The `ldapadd` utility is used to add new entries to an LDAP directory. It typically reads entry information from an LDIF file, though it can also accept input from standard input. An LDIF file for adding an entry defines the Distinguished Name (DN) of the new entry, its object classes, and all mandatory and optional attributes.
+
+Each entry in an LDIF file begins with a `dn:` line, followed by `objectClass:` lines, and then attribute-value pairs.
+
+.Example LDIF Structure for Adding an Entry
+[source,ldif]
+----
+dn: cn=John Doe,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: John Doe
+sn: Doe
+givenName: John
+uid: jdoe
+mail: jdoe@example.com
+userPassword: {SSHA512}NzZFRi9zN0h5dWt0anBLV3pMdXFvR25qVmx4MG1PdzR2c2I4S3F0aXQ4d093ajNlY2U3eHpwN3hsd3h2bHJ1c2NzaGV3
+description: Example user for training
+----
+
+*   `dn:`: Specifies the unique Distinguished Name of the entry being added. This must be unique within its parent container.
+*   `objectClass:`: Defines the types of objects this entry represents. Each object class defines a set of mandatory and optional attributes. `top` is always required.
+*   `cn:`, `sn:`, `givenName:`, `uid:`, `mail:`, `userPassword:`, `description:`: These are attribute-value pairs. `cn` (Common Name) and `sn` (Surname) are often mandatory for `person` object class. `userPassword` stores the user's password, typically hashed.
+
+The `ldapadd` command requires connection details (host, port), authentication credentials, and the LDIF file containing the entries to be added.
+
+.Syntax for `ldapadd`
+[source,bash]
+----
+ldapadd -h <hostname> -p <port> -D "cn=Directory Manager" -W -f <ldif_file>
+----
+
+*   `-h <hostname>`: Specifies the LDAP server host.
+*   `-p <port>`: Specifies the LDAP server port (default 389 for unencrypted, 636 for LDAPS).
+*   `-D "cn=Directory Manager"`: Specifies the bind DN for authentication. `cn=Directory Manager` is the default administrative user for RHDS.
+*   `-W`: Prompts for the bind password interactively. For scripting, consider `-w <password>` (less secure) or using a `.ldaprc` file.
+*   `-f <ldif_file>`: Specifies the path to the LDIF file containing the entries to add.
+*   `-x`: Use simple authentication (default for `ldapadd`).
+
+[NOTE]
+Always ensure your `ldif` files end with a blank line after the last attribute-value pair. This signals the end of the entry to the `ldapadd` utility.
+
+==== Hands-on Lab: Add New Directory Entries
+
+In this lab, you will create an Organizational Unit (OU) for "People" and then add a new user entry under it.
+
+.Prerequisites
+*   An RHDS 13 instance is running.
+*   You have root access or a user with `sudo` privileges on the RHDS server.
+*   You know the Directory Manager password.
+*   The `ldapadd` utility is available (part of `openldap-clients` package).
+
+.Steps
+.  **Verify RHDS is running:**
++
+[source,bash]
+----
+sudo systemctl status dirsrv@<instance_name>
+----
++
+Replace `<instance_name>` with your RHDS instance name (e.g., `default`).
+.  **Create an LDIF file for the "People" Organizational Unit:**
++
+We need a container for our user. An Organizational Unit (`ou=People`) is a common choice.
++
+Create a file named `ou_people.ldif` with the following content:
++
+[source,ldif]
+----
+dn: ou=People,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: People
+description: All personnel
+----
++
+Make sure to replace `dc=example,dc=com` with your RHDS base DN.
+.  **Add the "People" OU using `ldapadd`:**
++
+[source,bash]
+----
+ldapadd -h localhost -p 389 -D "cn=Directory Manager" -W -f ou_people.ldif
+----
++
+When prompted, enter the Directory Manager password.
++
+[TIP]
+If you encounter permission issues or "No such object" errors, double-check your `dn` and ensure the parent entry exists (e.g., `dc=example,dc=com`).
+.  **Create an LDIF file for a new user entry:**
++
+Create a file named `user_john.ldif` with the following content:
++
+[source,ldif]
+----
+dn: uid=jdoe,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: John Doe
+sn: Doe
+givenName: John
+uid: jdoe
+mail: jdoe@example.com
+userPassword: {SSHA512}NzZFRi9zN0h5dWt0anBLV3pMdXFvR25qVmx4MG1PdzR2c2I4S3F0aXQ4d093ajNlY2U3eHpwN3hsd3h2bHJ1c2NzaGV3
+description: Example user for training
+----
++
+*Replace* `dc=example,dc=com` with your RHDS base DN.
+*The provided `userPassword` is for `password` (hashed with SSHA512). In a real environment, you'd use `ldappasswd` or a secure method to set passwords.*
+.  **Add the new user entry using `ldapadd`:**
++
+[source,bash]
+----
+ldapadd -h localhost -p 389 -D "cn=Directory Manager" -W -f user_john.ldif
+----
++
+Enter the Directory Manager password when prompted. You should see a confirmation or no output if successful.
+.  **Verify the new entries using `ldapsearch`:**
++
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(objectClass=*)"
+----
++
+You should see both the `ou=People` entry and `uid=jdoe` entry in the search results.
+
+=== Modify Existing Directory Entries with `ldapmodify`
+
+Once an entry is created, you often need to update its attributes, such as changing a user's email, adding a new phone number, or updating a description. The `ldapmodify` utility facilitates these changes.
+
+==== Technical Explanation: `ldapmodify` and LDIF
+
+The `ldapmodify` utility is used to make changes to existing entries in an LDAP directory. Like `ldapadd`, it often takes input from an LDIF file. The LDIF format for modifications is distinct from that for additions. It specifies the DN of the entry to be modified and then lists the specific changes to be applied.
+
+A modification entry in an LDIF file starts with the `dn:` of the entry to be modified, followed by a `changetype: modify` line. Subsequent lines specify the type of modification (`add`, `delete`, or `replace`) for each attribute, followed by the attribute-value pairs.
+
+.Example LDIF Structure for Modifying an Entry
+[source,ldif]
+----
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: modify
+replace: mail
+mail: john.doe@newdomain.com
+-
+add: telephoneNumber
+telephoneNumber: +1 555 123 4567
+-
+delete: description
+----
+
+*   `dn:`: Specifies the unique Distinguished Name of the entry being modified.
+*   `changetype: modify`: Indicates that this LDIF block describes a modification operation.
+*   `replace: <attribute>`: Replaces all existing values for the specified attribute with the new values provided. If the attribute does not exist, it will be added.
+*   `add: <attribute>`: Adds new values to the specified attribute. If the attribute already exists, the new values are appended to the existing ones (multi-valued attributes). If the attribute does not exist, it's added.
+*   `delete: <attribute>`: Removes all values for the specified attribute. If specific values are listed after `delete: <attribute>`, only those values are removed.
+*   `-`: A hyphen on a line by itself serves as a separator between different modification operations within the same entry. This is crucial for parsing the LDIF correctly.
+
+[NOTE]
+When using `replace:`, if no values are provided for the attribute, it effectively deletes the attribute from the entry.
+
+.Syntax for `ldapmodify`
+[source,bash]
+----
+ldapmodify -h <hostname> -p <port> -D "cn=Directory Manager" -W -f <ldif_file>
+----
+
+The command-line options are largely the same as for `ldapadd`.
+
+==== Hands-on Lab: Modify Existing Directory Entries
+
+In this lab, you will modify the `uid=jdoe` entry to change their email address, add a telephone number, and remove their description.
+
+.Prerequisites
+*   The `uid=jdoe` entry exists in your RHDS instance.
+
+.Steps
+.  **Create an LDIF file for modification:**
++
+Create a file named `modify_john.ldif` with the following content:
++
+[source,ldif]
+----
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: modify
+replace: mail
+mail: john.doe@newdomain.com
+-
+add: telephoneNumber
+telephoneNumber: +1 555 987 6543
+-
+delete: description
+----
++
+*Replace* `dc=example,dc=com` with your RHDS base DN.
+.  **Apply the modification using `ldapmodify`:**
++
+[source,bash]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -W -f modify_john.ldif
+----
++
+Enter the Directory Manager password when prompted.
+.  **Verify the modifications using `ldapsearch`:**
++
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "uid=jdoe,ou=People,dc=example,dc=com" "(objectClass=*)"
+----
++
+Examine the output. You should see `mail: john.doe@newdomain.com`, `telephoneNumber: +1 555 987 6543`, and no `description` attribute.
+
+[TIP]
+You can also perform modifications interactively or using pipes. For example, to add an `employeeType` attribute:
+[source,bash]
+----
+ldapmodify -h localhost -p 389 -D "cn=Directory Manager" -W << EOF
+dn: uid=jdoe,ou=People,dc=example,dc=com
+changetype: modify
+add: employeeType
+employeeType: Full-time
+EOF
+----
+This can be useful for quick, single-attribute changes without creating a file.
+
+=== Delete Directory Entries with `ldapdelete`
+
+Removing entries from the directory is also a common administrative task. This could be due to an employee leaving, a resource no longer being needed, or cleaning up obsolete data.
+
+==== Technical Explanation: `ldapdelete`
+
+The `ldapdelete` utility is straightforward: it deletes an entry (and all its children, if it's a non-leaf entry and the server allows cascade deletes). It takes the DN of the entry to be deleted as an argument.
+
+.Syntax for `ldapdelete`
+[source,bash]
+----
+ldapdelete -h <hostname> -p <port> -D "cn=Directory Manager" -W "<DN_of_entry_to_delete>"
+----
+
+*   `<DN_of_entry_to_delete>`: The full Distinguished Name of the entry you wish to remove.
+
+[WARNING]
+`ldapdelete` is a powerful command. Deleting an entry that has child entries will also delete all those children. Always double-check the DN before executing a delete operation, especially in a production environment. There is typically no "undo" for `ldapdelete` without a backup.
+
+==== Hands-on Lab: Delete Directory Entries
+
+In this lab, you will delete the user entry `uid=jdoe` and then the `ou=People` container.
+
+.Prerequisites
+*   The `uid=jdoe` and `ou=People` entries exist.
+
+.Steps
+.  **Delete the user entry `uid=jdoe`:**
++
+[source,bash]
+----
+ldapdelete -h localhost -p 389 -D "cn=Directory Manager" -W "uid=jdoe,ou=People,dc=example,dc=com"
+----
++
+Enter the Directory Manager password.
+.  **Verify the user entry is deleted:**
++
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "uid=jdoe,ou=People,dc=example,dc=com" "(objectClass=*)"
+----
++
+This `ldapsearch` command should now return "No such object (32)" or similar, indicating the entry has been removed.
+.  **Delete the `ou=People` entry:**
++
+Since `uid=jdoe` (its child) has been deleted, `ou=People` is now a leaf node and can be deleted.
++
+[source,bash]
+----
+ldapdelete -h localhost -p 389 -D "cn=Directory Manager" -W "ou=People,dc=example,dc=com"
+----
++
+Enter the Directory Manager password.
+.  **Verify the `ou=People` entry is deleted:**
++
+[source,bash]
+----
+ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "ou=People,dc=example,dc=com" "(objectClass=*)"
+----
++
+This `ldapsearch` command should also return "No such object (32)".
+
+By successfully completing these labs, you have gained practical experience in the fundamental LDAP data manipulation operations: adding, modifying, and deleting entries using command-line tools and LDIF files. These skills are essential for managing any LDAP-compliant directory service, including Red Hat Directory Server 13.

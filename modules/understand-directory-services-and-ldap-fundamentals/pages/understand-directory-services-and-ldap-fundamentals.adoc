@@ -1,0 +1,14 @@
+#  Understand Directory Services and LDAP Fundamentals
+
+=== Understanding Directory Services and LDAP Fundamentals
+
+This section introduces directory services as centralized information repositories for network resources and users, highlighting their benefits for management and access. It covers the core concepts of LDAP, including:
+
+*   *Entries*: Fundamental units holding information.
+*   *Attributes*: Characteristics of an entry (e.g., `cn`, `uid`).
+*   *DNs (Distinguished Names)*: Unique identifiers for entries.
+*   *RDNs (Relative Distinguished Names)*: The most specific part of a DN.
+*   *Object Classes*: Defines mandatory and optional attributes for an entry.
+*   *Schema*: The set of rules governing directory structure and content.
+
+It also explores common LDAP operations (bind, search, add, modify, delete) and outlines the basic architecture and typical enterprise use cases for Red Hat Directory Server 13.

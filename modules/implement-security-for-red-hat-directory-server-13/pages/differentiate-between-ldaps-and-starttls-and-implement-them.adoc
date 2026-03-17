@@ -1,0 +1,156 @@
+#  Differentiate between LDAPS and STARTTLS and implement them.
+
+```asciidoc
+= Differentiate between LDAPS and STARTTLS and implement them
+
+This module explains the fundamental differences between LDAPS (LDAP over SSL/TLS) and STARTTLS, two crucial methods for securing communication with Red Hat Directory Server 13. It also provides hands-on guidance for their implementation and testing.
+
+== Securing LDAP Communication
+
+Directory services, particularly those containing sensitive user and system information, require robust security measures. Unencrypted LDAP communication is vulnerable to eavesdropping, data tampering, and unauthorized access. Red Hat Directory Server (RHDS) provides two primary mechanisms to encrypt LDAP traffic and ensure secure communication: LDAPS and STARTTLS. Understanding their distinctions is vital for designing a secure and compliant directory infrastructure.
+
+=== LDAPS: LDAP over SSL/TLS (Port 636)
+
+LDAPS secures LDAP communication by establishing an SSL/TLS tunnel *before* any LDAP operations begin. This means that the entire communication session, from the initial connection establishment to all subsequent data transfers, is encrypted from the outset.
+
+==== How LDAPS Works
+
+When an LDAP client wants to connect to RHDS using LDAPS:
+
+.  The client initiates a connection to the RHDS server on a dedicated, non-standard port, typically `636`.
+.  Immediately upon connection, the server and client begin an SSL/TLS handshake. This involves negotiating encryption parameters (cipher suites) and verifying each other's identities using digital certificates. The server presents its TLS certificate to the client, and optionally, the client can present a certificate to the server for mutual authentication.
+.  Once the SSL/TLS handshake is successfully completed and a secure, encrypted tunnel is established, all subsequent LDAP operations (such as bind, search, add, modify, or delete) are performed within this protected tunnel. No cleartext LDAP data is ever exchanged.
+
+==== Advantages of LDAPS
+
+*   **Always Encrypted**: The connection is secure from the very first byte exchanged, preventing any cleartext data from being transmitted at any point in the communication.
+*   **Simplicity**: From a client perspective, ensuring a secure session is as simple as connecting to the `ldaps://` URI on port `636`.
+*   **Explicit Security**: The dedicated port `636` explicitly signals that the communication channel is expected to be secure, making it easy to enforce network-level security policies.
+
+==== Disadvantages of LDAPS
+
+*   **Dedicated Port**: Requires a separate, non-standard port (`636`) for secure communication. This can sometimes lead to issues with legacy applications that only support port `389`, or with strict firewall rules that need explicit configuration for `636`.
+*   **Increased Overhead**: The SSL/TLS handshake adds a slight overhead at the beginning of each connection, although this is typically negligible for most use cases.
+
+==== Hands-on Lab: Implementing and Testing LDAPS
+
+Before proceeding, ensure your RHDS instance has valid server certificates configured in its NSS database. Refer to the "Manage server certificates using `certutil` and `dsconf`" section for details on certificate generation and installation.
+
+.  **Verify Server Certificate Configuration**:
+    First, ensure that a server certificate is correctly configured for your Directory Server instance and that it's the one RHDS is configured to use for TLS. Replace `instance1` with your actual instance name.
+    ```bash
+    dsconf -D "cn=Directory Manager" ldap://localhost:389 security list-certificates --instance instance1
+    ```
+    This command lists the certificates configured for the instance. Note the nickname of the certificate you intend to use for TLS. If multiple certificates exist, you can set the default using `dsconf instance1 security set-cert <nickname>`.
+
+.  **Enable the LDAPS Listener**:
+    LDAPS is enabled by configuring the port it should listen on. By default, it uses port `636`. Setting a non-zero port enables the LDAPS listener.
+    ```bash
+    # Set the LDAPS port for 'instance1' to 636
+    dsconf -D "cn=Directory Manager" ldap://localhost:389 security set-ldaps-port 636 --instance instance1
+    ```
+    You must restart the RHDS instance for this configuration change to take effect.
+    ```bash
+    dsctl instance1 restart
+    ```
+
+.  **Verify LDAPS Listener Status**:
+    After restarting, confirm that the RHDS server is listening on port `636`.
+    ```bash
+    netstat -tulnp | grep 636
+    ```
+    You should see output similar to `tcp        0      0 0.0.0.0:636             0.0.0.0:*               LISTEN      <PID>/ds.server`, indicating the `ds.server` process is listening on `636`.
+
+.  **Test LDAPS Connection with `ldapsearch`**:
+    Use the `ldapsearch` command with the `ldaps://` URI to connect securely.
+
+    **Note for Client Trust**: For `ldapsearch` to successfully connect via LDAPS without errors related to certificate validation, the client system must trust the Certificate Authority (CA) that issued your RHDS server's certificate. This usually involves placing the CA's certificate file (e.g., `ca.crt`) in a trusted location on the client system (e.g., `/etc/pki/ca-trust/source/anchors/` and running `update-ca-trust`) or configuring the client's `ldap.conf` (`/etc/openldap/ldap.conf`) with `TLS_CACERT /path/to/ca.crt`.
+
+    ```bash
+    # Search for an entry (e.g., the Directory Manager entry) using LDAPS
+    # Replace 'localhost' with your RHDS server's hostname if running remotely.
+    ldapsearch -H ldaps://localhost:636 -b "cn=Directory Manager,cn=config" -D "cn=Directory Manager" -W "(objectClass=*)"
+    ```
+    You will be prompted for the Directory Manager password. If successful, you will see the entry's attributes, confirming that a secure LDAPS connection was established. If you get certificate errors, verify your client's trust store configuration.
+
+=== STARTTLS: Opportunistic TLS (Port 389)
+
+STARTTLS (Start Transport Layer Security) is a mechanism that allows an LDAP client to initiate an unencrypted connection over the standard LDAP port (`389`) and then *opportunistically* upgrade that existing connection to a secure SSL/TLS encrypted one.
+
+==== How STARTTLS Works
+
+When an LDAP client wants to connect to RHDS using STARTTLS:
+
+.  The client initiates a connection to the RHDS server on the standard LDAP port `389`.
+.  The initial communication over this connection is in cleartext.
+.  The client then sends a `STARTTLS` extended operation request to the server.
+.  The server responds, and if both client and server support the `STARTTLS` operation, they perform an SSL/TLS handshake *over the existing cleartext connection*. Similar to LDAPS, this involves certificate exchange and cipher negotiation.
+.  After a successful handshake, the established connection is upgraded to an encrypted state. All subsequent LDAP operations over that same connection are then transmitted securely within the TLS tunnel.
+
+==== Advantages of STARTTLS
+
+*   **Standard Port**: Uses the default LDAP port `389`, making it compatible with existing firewall rules and many legacy applications that might not explicitly support or know about port `636`.
+*   **Flexibility**: Allows the same port to be used for both (potentially) unencrypted and encrypted communication, depending on the client's explicit request.
+*   **Reduced Port Management**: Simplifies network configuration by not requiring an additional dedicated port.
+
+==== Disadvantages of STARTTLS
+
+*   **Initial Cleartext**: The `STARTTLS` request itself is sent in cleartext. While the sensitive LDAP data is not exposed, an attacker could potentially observe that a TLS negotiation is being attempted.
+*   **Client Must Request**: The client must explicitly send the `STARTTLS` extended operation request. If the client doesn't, the communication remains unencrypted. This means client applications must be configured to use STARTTLS for security.
+*   **Less Overt Security**: Unlike LDAPS, where the port itself indicates security, STARTTLS relies on the client's explicit action to initiate encryption.
+
+==== Hands-on Lab: Implementing and Testing STARTTLS
+
+STARTTLS support is typically enabled by default in RHDS 13 when TLS is configured, meaning server certificates are present and accessible for the instance.
+
+.  **Verify TLS Configuration**:
+    Ensure that your RHDS instance is configured to use TLS. This usually means having a valid server certificate and private key associated with the instance, and that the `nsslapd-security` attribute is set to `on` for the LDAP listener.
+    ```bash
+    dsconf -D "cn=Directory Manager" ldap://localhost:389 security list --instance instance1
+    ```
+    Look for settings related to `TLS` and `security`, confirming that a certificate is configured and TLS is enabled for the listener. If TLS is not enabled, you might need to enable it for the standard port:
+    ```bash
+    dsconf -D "cn=Directory Manager" ldap://localhost:389 security set-security on --instance instance1
+    dsctl instance1 restart
+    ```
+
+.  **Test STARTTLS Connection with `ldapsearch`**:
+    Use the `ldapsearch` command with the `-Z` option to initiate STARTTLS over the standard LDAP port `389`.
+
+    **Note for Client Trust**: As with LDAPS, the client system needs to trust the CA certificate that issued your RHDS server's certificate. Configure `TLS_CACERT` in `ldap.conf` or ensure the CA is globally trusted.
+
+    ```bash
+    # Search for an entry using STARTTLS
+    ldapsearch -H ldap://localhost:389 -b "cn=Directory Manager,cn=config" -D "cn=Directory Manager" -W -Z "(objectClass=*)"
+    ```
+    You will be prompted for the Directory Manager password. If successful, this indicates that the connection was upgraded to TLS using STARTTLS, and the search operation was performed securely.
+
+=== Comparison: LDAPS vs. STARTTLS
+
+|===
+| Feature | LDAPS (LDAP over SSL/TLS) | STARTTLS
+
+| **Port** | Dedicated port, typically `636` | Standard LDAP port, `389`
+| **Encryption Initiation** | Encryption established *before* any LDAP communication. Connection is inherently secure. | Connection starts cleartext, *then* upgraded to TLS via a client request.
+| **Security Guarantee** | Always encrypted from the point of connection establishment. | Encrypted only after a successful `STARTTLS` negotiation. Initial phase is cleartext.
+| **Firewall Friendliness** | Requires opening `636` if not already allowed. | Uses standard `389`, often already allowed.
+| **Client Requirement** | Client connects using an `ldaps://` URI (e.g., `ldaps://server:636`). | Client connects using an `ldap://` URI (e.g., `ldap://server:389`) and explicitly sends a `STARTTLS` request (`-Z` option for `ldapsearch`).
+| **Use Cases** | Environments where all LDAP traffic *must* be encrypted from the absolute outset. Preferred for simplicity when clients only need secure connections. | Environments needing to support both secure and (potentially legacy) insecure clients on the same port. Most modern LDAP clients and applications prefer STARTTLS for flexibility.
+|===
+
+=== When to Use Which
+
+The choice between LDAPS and STARTTLS often depends on specific security requirements, application compatibility, and network architecture:
+
+*   **Choose LDAPS** if:
+    *   You require absolute assurance that *no* cleartext LDAP traffic ever leaves the client, even for the initial negotiation phase.
+    *   Your network infrastructure and all client applications are designed to work with port `636` or can be easily configured to do so.
+    *   Simplicity of always-encrypted connections is a primary concern, and you want to explicitly separate secure and insecure LDAP traffic at the port level.
+
+*   **Choose STARTTLS** if:
+    *   You need to leverage the standard LDAP port `389` for compatibility with existing applications, legacy systems, or strict firewall rules that might only permit traffic on `389`.
+    *   You want to offer the *option* for secure communication, allowing clients to upgrade an initially cleartext connection, which is a common pattern in many modern network protocols.
+    *   Many modern LDAP clients and applications are designed to use STARTTLS by default for secure communication over port `389`.
+
+In many contemporary deployments, STARTTLS is often the preferred choice due to its use of the standard port while still providing robust encryption. However, LDAPS offers a slightly higher guarantee against accidental cleartext communication by enforcing encryption from the very first byte. For maximum security and compatibility, Red Hat Directory Server can be configured to support both LDAPS on port 636 and STARTTLS on port 389 simultaneously.
+```

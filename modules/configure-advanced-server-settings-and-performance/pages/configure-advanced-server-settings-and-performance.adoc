@@ -1,0 +1,10 @@
+#  Configure Advanced Server Settings and Performance
+
+To configure advanced server settings and performance in Red Hat Directory Server 13, you will:
+
+* xref:redhat-directory-server-13-administration-configuration-and-troubleshooting::configure-server-wide-parameters.adoc[Configure server-wide and instance-specific settings].
+* xref:redhat-directory-server-13-administration-configuration-and-troubleshooting::manage-suffixes-and-database-instances.adoc[Manage multiple suffixes and database instances].
+* xref:redhat-directory-server-13-administration-configuration-and-troubleshooting::implement-attribute-indexing.adoc[Implement attribute indexing] to optimize search performance.
+* xref:redhat-directory-server-13-administration-configuration-and-troubleshooting::enable-and-configure-rhds-plugins.adoc[Enable and configure RHDS plugins] for extended functionality.
+* xref:redhat-directory-server-13-administration-configuration-and-troubleshooting::monitor-rhds-server-performance.adoc[Monitor RHDS server performance] and resource utilization.
+* xref:redhat-directory-server-13-administration-configuration-and-troubleshooting::configure-logging-and-auditing.adoc[Configure logging and auditing] for compliance and troubleshooting.

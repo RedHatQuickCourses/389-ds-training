@@ -1,0 +1,7 @@
+* xref:manage-directory-data-and-schema.adoc[]
+** xref:perform-ldap-data-manipulation-operations-add-modify-delete-entries-using-command-line-tools.adoc[]
+** xref:execute-efficient-ldap-searches-to-retrieve-directory-information.adoc[]
+** xref:explain-the-role-of-schema-in-ldap-and-manage-object-classes-and-attributes.adoc[]
+** xref:import-and-export-directory-data-using-ldif-files.adoc[]
+** xref:administer-user-and-group-entries-within-the-directory.adoc[]
+** xref:hands-on-lab-manage-directory-entries-and-perform-advanced-ldap-searches.adoc[]

@@ -1,0 +1,371 @@
+#  Implement robust backup and restore procedures for directory data.
+
+= Implement Robust Backup and Restore Procedures for Directory Data
+
+:toc:
+:toc-title: Table of Contents
+:experimental:
+
+Protecting directory data is paramount for any organization. Red Hat Directory Server (RHDS) stores critical identity and access management information, making robust backup and restore procedures non-negotiable for business continuity and disaster recovery. This section provides a comprehensive overview of RHDS backup and restore strategies, offering both theoretical understanding and practical hands-on experience to ensure your directory data remains secure and recoverable.
+
+== Understanding RHDS Backup Strategies
+
+RHDS offers powerful tools to safeguard your directory data. The choice of backup method depends on your recovery point objective (RPO) and recovery time objective (RTO), as well as the granularity of the data you need to protect. RHDS provides two primary backup approaches:
+
+*   *Online Logical Backup (`dsconf backend ldif export`)*: This method exports directory data into an LDIF (LDAP Data Interchange Format) file while the server is actively running. It provides a logical snapshot of your data and is suitable for flexible data management, migration, or restoring specific entries without service interruption.
+*   *Offline Physical Backup (`dsadm backup`)*: This method creates a comprehensive, byte-for-byte copy of the RHDS instance's underlying database files, configuration, and logs. It requires stopping the RHDS instance, making it a "cold" backup. This approach offers the most complete point-in-time recovery for the entire server.
+
+=== Online Logical Backup using `dsconf backend ldif export`
+
+The `dsconf backend ldif export` command (which utilizes the `db2ldif` functionality internally) allows you to export all or part of your directory data to an LDIF file. Since the server remains operational, this is an "online" or "hot" backup, minimizing service impact.
+
+.Key Characteristics
+*   *Zero downtime*: The RHDS instance continues to serve requests during the backup process.
+*   *Logical data format*: Data is exported in LDIF, a human-readable text format, making it easy to inspect, modify, and import selectively.
+*   *Granular control*: You can specify particular suffixes to back up, or export the entire directory.
+*   *Versatile use cases*: Ideal for data migration, auditing specific data sets, creating snapshots for development/testing, and partial data restores.
+
+.Command Syntax
+[source,bash]
+----
+sudo dsconf <instance_name> backend ldif export \
+  --suffix "<suffix_DN>" \
+  --file "<output_file.ldif>" \
+  --compress
+----
+
+.Parameters
+*   `<instance_name>`: The name of your RHDS instance (e.g., `ds0`).
+*   `<suffix_DN>`: The Distinguished Name (DN) of the suffix you wish to back up (e.g., `dc=example,dc=com`). To back up all suffixes, replace `--suffix "<suffix_DN>"` with `--all-suffixes`.
+*   `<output_file.ldif>`: The full path and filename for the output LDIF file. Appending `.gz` to the filename (e.g., `/tmp/my_directory_backup.ldif.gz`) automatically compresses the output, which is highly recommended for large directories.
+*   `--compress`: (Optional) Explicitly tells `dsconf` to compress the output. This is often inferred if the filename ends with `.gz`.
+
+.Prerequisites
+*   The RHDS instance must be running.
+*   Sufficient disk space must be available at the specified output file location.
+*   The user executing the command (e.g., `sudo`) must have appropriate permissions to write to the output directory.
+
+=== Offline Physical Backup using `dsadm backup`
+
+The `dsadm backup` command performs a complete, byte-for-byte copy of your entire RHDS instance. This includes the configuration files, all database files (e.g., `userroot`, `changelog`), and transaction logs. Because it copies raw database files, the RHDS instance *must* be stopped to ensure data consistency, making this an "offline" or "cold" backup.
+
+.Key Characteristics
+*   *Requires downtime*: The RHDS instance must be stopped during the backup, interrupting service.
+*   *Physical data format*: Copies the raw database files, providing a perfect point-in-time snapshot of the entire instance.
+*   *Comprehensive*: Backs up everything associated with the instance, including schema, configuration, and all data.
+*   *Critical use cases*: Essential for full server recovery after catastrophic hardware failure, migrating an entire instance to new hardware, or comprehensive disaster recovery.
+
+.Command Syntax
+[source,bash]
+----
+sudo dsam backup <instance_path> --backup-dir <backup_directory>
+----
+
+.Parameters
+*   `<instance_path>`: The full path to your RHDS instance directory (e.g., `/etc/dirsrv/slapd-ds0`). This is where the instance's configuration and pointers to its data reside.
+*   `<backup_directory>`: The directory where the backup archives will be stored. `dsadm` will create a timestamped subdirectory within this path (e.g., `/my_backup_location/2023_10_27_14_30_00_ds0`).
+
+.Prerequisites
+*   The RHDS instance must be stopped before initiating the backup.
+*   Sufficient disk space is required in the `<backup_directory>` to store the entire instance data.
+
+== Understanding RHDS Restore Strategies
+
+Restoring directory data is a critical operation that brings your service back online after an incident. The restore method chosen directly corresponds to the type of backup you performed.
+
+=== Restoring from an Online Logical Backup (.ldif file)
+
+Restoring data from an LDIF file involves importing the data back into the directory. This is typically done using the `ldapadd` command for adding new entries or `ldapmodify` for updating existing ones. For a full suffix restore, it's often best practice to delete the existing suffix data (if present) and then import the LDIF.
+
+.Procedure for a Full Suffix Restore
+For a clean, full restore of an entire suffix from an LDIF file, follow these steps. This ensures no conflicts with existing data.
+
+.   *Stop the RHDS instance (Recommended for full suffix replace)*: While `ldapadd` can operate on a live server, stopping it prevents concurrent modifications and ensures data consistency during a bulk import.
+    [source,bash]
+    ----
+    sudo dsctl stop <instance_name>
+    ----
+
+.   *Delete the existing suffix (if you are replacing all data)*: This step removes all current data within the suffix, preparing it for a clean import.
+    [source,bash]
+    ----
+    sudo dsconf <instance_name> backend suffix delete --suffix "<suffix_DN>"
+    ----
+
+.   *Start the RHDS instance (if stopped previously)*:
+    [source,bash]
+    ----
+    sudo dsctl start <instance_name>
+    ----
+
+.   *Add the suffix back (if deleted)*: If you deleted the suffix, you must re-create the backend before you can import data into it.
+    [source,bash]
+    ----
+    sudo dsconf <instance_name> backend suffix add \
+      --suffix "<suffix_DN>" \
+      --be-name "<backend_name>" \
+      --require-index-files yes
+    ----
+    *Note*: `<backend_name>` is typically the same as the suffix (e.g., `userroot` for `dc=example,dc=com`).
+
+.   *Import the LDIF data*: Use `ldapadd` to populate the suffix with data from your backup file.
+    [source,bash]
+    ----
+    ldapadd -x -D "cn=Directory Manager" -W -f <backup_file.ldif>
+    ----
+    *   `-x`: Use simple authentication.
+    *   `-D "cn=Directory Manager"`: Bind as the Directory Manager, which has the necessary permissions.
+    *   `-W`: Prompt for the Directory Manager password.
+    *   `-f <backup_file.ldif>`: Specify the path to your LDIF backup file. If it's compressed (e.g., `.gz`), you'll need to decompress it first (e.g., `gunzip -c <backup.ldif.gz> | ldapadd ...`).
+
+.Prerequisites
+*   Access to the LDIF backup file.
+*   Directory Manager credentials.
+*   Sufficient disk space if decompressing the LDIF.
+
+=== Restoring from an Offline Physical Backup (`dsadm restore`)
+
+Restoring from a physical backup is the method for a complete recovery of an RHDS instance to a specific point in time. This operation also requires the RHDS instance to be stopped to prevent any data corruption during the file replacement process.
+
+.Procedure for a Full Instance Restore
+.   *Stop the RHDS instance*: Ensure the instance is completely shut down before proceeding.
+    [source,bash]
+    ----
+    sudo dsctl stop <instance_name>
+    ----
+
+.   *Restore the instance*: Execute `dsadm restore`, specifying the instance path and the exact timestamped backup directory.
+    [source,bash]
+    ----
+    sudo dsam restore <instance_path> --restore-dir <backup_directory>/<timestamp_backup_folder>
+    ----
+    *   `<instance_path>`: The full path to your RHDS instance directory (e.g., `/etc/dirsrv/slapd-ds0`).
+    *   `<backup_directory>/<timestamp_backup_folder>`: The full path to the specific backup snapshot you wish to restore from. Remember that `dsadm backup` creates timestamped folders (e.g., `/var/lib/dirsrv/backups/ds0_full_backup/2023_10_27_14_30_00_ds0`).
+
+.   *Start the RHDS instance*: Once the restore is complete, bring the RHDS instance back online.
+    [source,bash]
+    ----
+    sudo dsctl start <instance_name>
+    ----
+
+.Prerequisites
+*   The RHDS instance must be stopped.
+*   Access to the physical backup directory.
+*   Sufficient disk space to overwrite the existing instance files with the restored ones.
+
+== Hands-on Lab: Implementing Backup and Restore
+
+In this lab, you will practice both online logical and offline physical backup and restore procedures for your RHDS instance.
+
+=== Lab Setup
+
+Ensure you have a running Red Hat Directory Server 13 instance. If not, refer to the "Install and Configure Red Hat Directory Server 13" module to deploy one.
+For this lab, we'll assume your instance is named `ds0` and its primary suffix is `dc=example,dc=com`.
+
+[source,bash]
+----
+# Verify RHDS instance is running
+sudo dsctl status ds0
+
+# If not running, start it
+# sudo dsctl start ds0
+----
+
+=== Activity 1: Online Logical Backup and Selective Restore
+
+In this activity, you will perform an online logical backup, introduce a change to the directory, and then selectively restore the original data using the generated LDIF file. This demonstrates granular data recovery without full instance downtime.
+
+.Goal: Back up the `dc=example,dc=com` suffix, modify an entry, then restore only that specific entry.
+
+.Steps:
+
+.   *Create a sample user entry (if you don't have one)*: This entry will be our target for modification and restoration.
+    [source,bash]
+    ----
+    ldapadd -x -D "cn=Directory Manager" -W <<EOF
+    dn: uid=jdoe,ou=users,dc=example,dc=com
+    objectClass: top
+    objectClass: person
+    objectClass: organizationalPerson
+    objectClass: inetOrgPerson
+    uid: jdoe
+    cn: John Doe
+    sn: Doe
+    givenName: John
+    mail: jdoe@example.com
+    userPassword: password
+    EOF
+    ----
+    (Enter `Directory Manager` password when prompted: `password`)
+
+.   *Perform an online logical backup of `dc=example,dc=com`*: We'll save this backup to `/tmp`.
+    [source,bash]
+    ----
+    sudo dsconf ds0 backend ldif export \
+      --suffix "dc=example,dc=com" \
+      --file "/tmp/rhds_logical_backup_$(date +%Y%m%d%H%M%S).ldif.gz" \
+      --compress
+    ----
+    *Note*: Replace `ds0` with your actual instance name if different.
+    Verify the backup file exists and list it:
+    [source,bash]
+    ----
+    ls -l /tmp/rhds_logical_backup_*.ldif.gz
+    ----
+
+.   *Modify an attribute for the sample user*: We'll change John Doe's email address to simulate an accidental modification.
+    [source,bash]
+    ----
+    ldapmodify -x -D "cn=Directory Manager" -W <<EOF
+    dn: uid=jdoe,ou=users,dc=example,dc=com
+    changetype: modify
+    replace: mail
+    mail: john.doe.modified@example.com
+    EOF
+    ----
+    (Enter `Directory Manager` password when prompted)
+    Verify the change by searching for the entry:
+    [source,bash]
+    ----
+    ldapsearch -x -D "cn=Directory Manager" -W -b "uid=jdoe,ou=users,dc=example,dc=com" mail
+    ----
+    You should see `mail: john.doe.modified@example.com`.
+
+.   *Restore the specific entry from the LDIF backup*:
+    .   *Decompress and view the latest backup file*:
+        [source,bash]
+        ----
+        latest_ldif_gz=$(ls -t /tmp/rhds_logical_backup_*.ldif.gz | head -1)
+        gunzip -c "$latest_ldif_gz" > /tmp/latest_rhds_logical_backup.ldif
+        less /tmp/latest_rhds_logical_backup.ldif
+        ----
+    .   *Extract the `jdoe` entry*: Locate the `dn: uid=jdoe,ou=users,dc=example,dc=com` entry in the `/tmp/latest_rhds_logical_backup.ldif` file and copy it into a new file, say `/tmp/jdoe_restore.ldif`. Ensure it contains all attributes for the `jdoe` entry as it was during the backup. A simple `grep` approach might not work perfectly due to multiline entries; manual extraction or `sed` for a specific block is more reliable for complex entries.
+        *Example `/tmp/jdoe_restore.ldif` content (your `userPassword` will be a hash):*
+        [source,ldap]
+        ----
+        dn: uid=jdoe,ou=users,dc=example,dc=com
+        objectClass: top
+        objectClass: person
+        objectClass: organizationalPerson
+        objectClass: inetOrgPerson
+        uid: jdoe
+        cn: John Doe
+        sn: Doe
+        givenName: John
+        mail: jdoe@example.com
+        userPassword:: e1NTSEF9WlZiaW12a3d3RGR3eThlWDRlMkxkQWdCMU95cWd1TjI=
+        ----
+    .   *Apply the restore using `ldapmodify`*: If the entry exists, `ldapmodify` will replace its attributes with those in the LDIF.
+        [source,bash]
+        ----
+        ldapmodify -x -D "cn=Directory Manager" -W -f /tmp/jdoe_restore.ldif
+        ----
+        (Enter `Directory Manager` password when prompted)
+        *Note*: If `ldapmodify` fails with "entry already exists" and you want to completely revert, you might need to `ldapdelete` the entry first, then `ldapadd` it with the original data. For this scenario, `ldapmodify` should suffice.
+
+.   *Verify the restore*: Check John Doe's email attribute again.
+    [source,bash]
+    ----
+    ldapsearch -x -D "cn=Directory Manager" -W -b "uid=jdoe,ou=users,dc=example,dc=com" mail
+    ----
+    You should now see `mail: jdoe@example.com` again, confirming the restore was successful.
+
+=== Activity 2: Offline Physical Backup and Full Instance Restore
+
+In this activity, you will perform a complete offline physical backup of your RHDS instance, simulate a catastrophic data loss by removing its database files, and then restore the entire instance to its previous state.
+
+.Goal: Perform a full backup, simulate data loss, then restore the entire RHDS instance.
+
+.Steps:
+
+.   *Perform an offline physical backup*:
+    .   *Stop the RHDS instance*: This is crucial for a consistent physical backup.
+        [source,bash]
+        ----
+        sudo dsctl stop ds0
+        ----
+    .   *Create a dedicated backup directory*:
+        [source,bash]
+        ----
+        sudo mkdir -p /var/lib/dirsrv/backups/ds0_full_backup
+        ----
+    .   *Execute the backup command*:
+        [source,bash]
+        ----
+        sudo dsam backup /etc/dirsrv/slapd-ds0 --backup-dir /var/lib/dirsrv/backups/ds0_full_backup
+        ----
+        *Note*: `dsadm` will create a timestamped subdirectory (e.g., `2023_10_27_10_30_00_ds0`) within `/var/lib/dirsrv/backups/ds0_full_backup`.
+    .   *Start the RHDS instance*: (Temporarily start it to verify things before the simulated data loss.)
+        [source,bash]
+        ----
+        sudo dsctl start ds0
+        ----
+        Verify data is present (e.g., search for `jdoe`):
+        [source,bash]
+        ----
+        ldapsearch -x -D "cn=Directory Manager" -W -b "uid=jdoe,ou=users,dc=example,dc=com"
+        ----
+
+.   *Simulate data loss (DANGER! Do NOT perform this on a production system!)*: This step simulates a severe corruption or deletion of your directory's backend database files.
+    .   *Stop the RHDS instance*:
+        [source,bash]
+        ----
+        sudo dsctl stop ds0
+        ----
+    .   *Remove the database files*: These commands delete the actual data files for your `ds0` instance.
+        [source,bash]
+        ----
+        sudo rm -rf /var/lib/dirsrv/slapd-ds0/db/*
+        sudo rm -rf /var/lib/dirsrv/slapd-ds0/changelogdb/*
+        ----
+        *Note*: Attempting to start the server now would likely result in an empty or corrupted directory.
+    .   *(Optional) Attempt to start and verify to see the effect of data loss*:
+        [source,bash]
+        ----
+        sudo dsctl start ds0
+        ----
+        If you try `ldapsearch` now, you might get errors or an empty result for `jdoe`. Stop the server again.
+        [source,bash]
+        ----
+        sudo dsctl stop ds0
+        ----
+
+.   *Restore the RHDS instance from the physical backup*:
+    .   *Identify the latest backup directory*:
+        [source,bash]
+        ----
+        latest_physical_backup_dir=$(ls -td /var/lib/dirsrv/backups/ds0_full_backup/* | head -1)
+        echo "Restoring from: $latest_physical_backup_dir"
+        ----
+    .   *Execute the restore command*:
+        [source,bash]
+        ----
+        sudo dsam restore /etc/dirsrv/slapd-ds0 --restore-dir "$latest_physical_backup_dir"
+        ----
+
+.   *Start the RHDS instance*: Bring your instance back online after the restoration.
+    [source,bash]
+    ----
+    sudo dsctl start ds0
+    ----
+
+.   *Verify the restore*: Confirm that your directory data, including the `jdoe` entry, is fully restored.
+    [source,bash]
+    ----
+    ldapsearch -x -D "cn=Directory Manager" -W -b "uid=jdoe,ou=users,dc=example,dc=com" mail
+    ----
+    You should now see `mail: jdoe@example.com` (or whatever mail was present at the exact time of the *physical* backup, not necessarily the one restored in Activity 1 if that was later). This confirms the entire instance has been rolled back.
+
+== Best Practices for RHDS Backup and Restore
+
+Implementing a robust backup and restore strategy involves more than just knowing the commands. Consider these best practices:
+
+*   *Regular and Automated Backups*: Schedule both logical and physical backups regularly. Automate these tasks using `cron` or systemd timers to ensure consistency and reduce manual effort.
+*   *Off-site Storage*: Store backup files, especially physical backups, in a secure, geographically separate location. This protects against site-specific disasters like fire, flood, or major power outages.
+*   *Backup Verification and Testing*: Periodically test your restore procedures. Don't wait for an actual disaster to discover that your backups are corrupt or your restore process is flawed. Test both full and granular restores in a non-production environment.
+*   *Monitoring*: Implement monitoring for backup job completion status, disk space utilization on backup storage, and any errors during the backup process.
+*   *Comprehensive Documentation*: Document your backup frequency, retention policies, storage locations, and detailed step-by-step restore procedures. This is invaluable during a crisis.
+*   *Security for Backups*: LDIF files can contain sensitive information like user passwords (even if hashed) and other directory data. Protect backup files with appropriate file system permissions, encryption, and restricted access.
+*   *Define RTO and RPO*: Establish clear Recovery Time Objectives (RTO – how quickly you need to be back online) and Recovery Point Objectives (RPO – how much data loss you can tolerate) for your organization. These metrics will guide your backup frequency and choice of backup methods.
+*   *Test Environment for Disaster Recovery*: Maintain a separate test environment where you can simulate disaster recovery scenarios and validate your backup/restore processes without impacting production.
+*   *Integrate with Replication*: While replication provides high availability and fault tolerance, it is *not* a substitute for backups. Replication protects against single-server failures but not against logical corruption (e.g., accidental mass deletions) or hardware failures affecting all replicas. Use replication and backups together for a comprehensive data protection strategy.

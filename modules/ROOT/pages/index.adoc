@@ -1,22 +1,39 @@
-= An Example Quick Course
+=  Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
 :navtitle: Home
 
 == Introduction
 
-Course Title: Course title FIXME
+Course Title:  Red Hat Directory Server 13: Administration, Configuration, and Troubleshooting
 
 Description:
 Course description FIXME
 
 Duration: FIXME hours
 
-== Objectives
+== Topics covered in this course
 
-On completing this course, you should be able to:
 
-* Observable, measurable objective...
-* Observable, measurable objective...
-* Observable, measurable objective...
+*  Understand Directory Services and LDAP Fundamentals
+
+*  Install and Configure Red Hat Directory Server 13
+
+*  Manage Directory Data and Schema
+
+*  Configure Advanced Server Settings and Performance
+
+*  Implement Security for Red Hat Directory Server 13
+
+*  Deploy and Manage RHDS Replication
+
+*  Manage Password Policies
+
+*  Deploy Red Hat Directory Server 13 in Containers
+
+*  Troubleshoot and Maintain Red Hat Directory Server 13
+
+*  Address Advanced Scenarios and Best Practices
+
+
 
 == Prerequisites
 

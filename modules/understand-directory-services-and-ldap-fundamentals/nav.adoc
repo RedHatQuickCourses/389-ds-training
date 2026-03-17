@@ -1,0 +1,6 @@
+* xref:understand-directory-services-and-ldap-fundamentals.adoc[]
+** xref:explain-the-purpose-and-benefits-of-directory-services.adoc[]
+** xref:describe-the-core-concepts-of-ldap-entries-attributes-dns-rdns-object-classes-schema.adoc[]
+** xref:identify-common-ldap-operations-bind-search-add-modify-delete.adoc[]
+** xref:outline-the-basic-architecture-of-red-hat-directory-server-13.adoc[]
+** xref:discuss-common-use-cases-for-rhds-in-an-enterprise-environment.adoc[]

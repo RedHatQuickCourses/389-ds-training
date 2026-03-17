@@ -1,0 +1,224 @@
+#  Set up read-only consumer replicas for scalability and redundancy.
+
+This content is provided in Antora AsciiDoc format.
+
+= Deploy and Manage RHDS Replication
+
+=== Set up read-only consumer replicas for scalability and redundancy
+
+Directory server replication is a critical component for achieving high availability, fault tolerance, and scalability in enterprise environments. While multi-supplier (formerly multi-master) replication handles write operations across multiple servers, *read-only consumer replicas* are specifically designed to enhance read performance and provide redundancy for read operations. This section details their purpose, benefits, and the step-by-step process of setting them up.
+
+==== Understanding Read-Only Consumer Replicas
+
+A read-only consumer replica in Red Hat Directory Server (RHDS) is an instance that receives directory updates from one or more supplier servers but does not process write operations for the replicated suffix. Its primary role is to serve read requests, thereby distributing the query load and improving overall system responsiveness.
+
+image::read-only-consumer-replica.png[Read-Only Consumer Replica Architecture, width=800, align=center]
+_Figure: A Read-Only Consumer Replica receives updates from a supplier and serves read requests._
+
+[NOTE]
+.Nomenclature Change
+In RHDS 13, the terms "master" and "slave" have been updated to "supplier" and "consumer" respectively, to align with more inclusive language and better reflect their roles in replication. "Multi-master" is now referred to as "multi-supplier" replication.
+
+===== Purpose and Benefits
+
+*   **Scalability**: By offloading read requests from the primary suppliers, consumer replicas allow the directory service to handle a significantly higher volume of read operations. This is crucial for applications that perform frequent searches, such as authentication lookups or address book queries.
+*   **Redundancy and High Availability**: If a primary supplier goes offline, applications configured to query a pool of directory servers can seamlessly fail over to a consumer replica for read access, ensuring continuous service for read-intensive tasks.
+*   **Load Balancing**: Client applications can be configured to distribute their read queries across multiple consumer replicas using techniques like round-robin DNS or application-level load balancing, preventing any single server from becoming a bottleneck.
+*   **Geographic Distribution**: Consumer replicas can be deployed in different geographical locations closer to users, reducing latency for read operations.
+*   **Disaster Recovery**: In a disaster scenario where primary suppliers might be lost, consumer replicas still hold a copy of the directory data, which can be invaluable for recovery efforts or for providing limited read access during restoration.
+
+===== How Read-Only Consumer Replication Works
+
+1.  **Supplier Originates Changes**: All write operations (add, modify, delete) for a replicated suffix occur on a supplier server.
+2.  **Supplier Sends Updates**: The supplier, configured with a replication agreement pointing to the consumer, sends these changes to the consumer replica.
+3.  **Consumer Receives and Applies**: The consumer replica receives these updates and applies them to its local copy of the directory data.
+4.  **Consumer Serves Reads**: The consumer replica is then able to serve read requests from clients for the replicated suffix. Any attempt to perform a write operation directly on the consumer for the replicated suffix will be rejected.
+
+[IMPORTANT]
+Consumer replicas *do not* participate in multi-supplier write synchronization. They only receive changes. If you need multiple servers to accept write operations, you must configure multi-supplier replication.
+
+==== Prerequisites
+
+Before setting up a read-only consumer replica, ensure the following:
+
+*   **Existing Supplier Instance**: You must have at least one operational RHDS 13 supplier instance with the suffix you intend to replicate.
+*   **New RHDS Instance for Consumer**: A separate RHEL 9 server with RHDS 13 packages installed, ready to host the consumer instance.
+*   **Network Connectivity**: Ensure full network connectivity between the supplier and consumer servers on the LDAP/LDAPS ports (typically 389/636) and the replication port (typically 389/636, or a dedicated port if configured).
+*   **Firewall Rules**: Configure firewall rules on both supplier and consumer to allow incoming connections on the necessary ports.
+
+==== Hands-on Lab: Deploying a Read-Only Consumer Replica
+
+In this lab, you will set up a read-only consumer replica for an existing RHDS supplier.
+
+===== Lab Scenario
+
+*   **Supplier Server**: `rhds-supplier.example.com`
+    *   Instance Name: `instance1`
+    *   Replicated Suffix: `dc=example,dc=com`
+    *   Directory Manager DN: `cn=Directory Manager`
+    *   Directory Manager Password: `secret`
+*   **Consumer Server**: `rhds-consumer.example.com`
+    *   Instance Name: `instance2` (will be created)
+
+===== Step 1: Prepare the Consumer Server
+
+On `rhds-consumer.example.com`, install RHDS packages and create a new instance. We will *not* initialize the `dc=example,dc=com` suffix as a new, independent database on the consumer. Instead, it will be added as a replica later.
+
+.Log in to `rhds-consumer.example.com` as `root`.
+.Install RHDS packages if not already installed:
++
+[source,bash]
+----
+dnf install 389-ds-base 389-ds-base-legacy-tools -y
+----
+.Create a new RHDS instance named `instance2`. Provide necessary details when prompted, ensuring the instance uses a different set of ports if running on the same host as another instance (though in this lab, it's on a separate host).
++
+[source,bash]
+----
+dscreate create
+----
++
+Follow the prompts:
+*   **Directory Server identifier**: `instance2`
+*   **System User**: `dirsrv` (default)
+*   **LDAP Port**: `389` (or another free port like `3389` if 389 is taken)
+*   **LDAPS Port**: `636` (or another free port like `3636`)
+*   **Admin Port**: `9830` (or another free port)
+*   **Suffix**: _Leave this blank for now, or use a placeholder like `dc=temp` as it will be removed/replaced for the replicated suffix._ We will create the replicated suffix as a consumer later.
+*   **Directory Manager DN**: `cn=Directory Manager`
+*   **Directory Manager password**: `secret` (or your chosen password)
+*   **Root DN for the backend database**: `cn=Directory Manager` (default)
+*   **Root DSE suffix**: `cn=Monitor` (default)
+*   Review settings and confirm creation.
+
+.Start the new instance:
++
+[source,bash]
+----
+dsctl instance2 start
+----
+
+===== Step 2: Configure the Consumer as a Replicating Consumer
+
+Now, we will configure the new instance (`instance2` on `rhds-consumer.example.com`) to be a consumer for the `dc=example,dc=com` suffix replicated from `instance1` on `rhds-supplier.example.com`.
+
+.Log in to `rhds-consumer.example.com` as `root`.
+.Add the `dc=example,dc=com` suffix to `instance2` as a *replicating consumer*.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w secret instance2 suffix add --suffix "dc=example,dc=com" --type replicating
+----
++
+[NOTE]
+The `--type replicating` flag is crucial here. It tells RHDS that this suffix will receive its data via replication, rather than being an independent, writable database.
+
+.Log in to `rhds-supplier.example.com` as `root`.
+.Create a replication agreement on the supplier (`instance1`) that points to the new consumer (`instance2`). This agreement defines how and when data is replicated from the supplier to the consumer.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w secret instance1 replication agreement create \
+  --suffix "dc=example,dc=com" \
+  --replica-host rhds-consumer.example.com \
+  --replica-port 389 \
+  --bind-dn "cn=replica,cn=replication managers,cn=config" \
+  --bind-pw "repl_password" \
+  --agreement-name "to_consumer_instance2" \
+  --agreement-type consumer
+----
++
+*   `--suffix "dc=example,dc=com"`: Specifies the suffix to be replicated.
+*   `--replica-host rhds-consumer.example.com`: The hostname or IP of the consumer server.
+*   `--replica-port 389`: The LDAP port of the consumer instance.
+*   `--bind-dn "cn=replica,cn=replication managers,cn=config"`: The DN of the special replication manager user used for authentication between replicas. This user is automatically created when you set up replication for a suffix.
+*   `--bind-pw "repl_password"`: The password for the replication manager user. Choose a strong password.
+*   `--agreement-name "to_consumer_instance2"`: A descriptive name for this replication agreement.
+*   `--agreement-type consumer`: Specifies that this agreement is for a consumer replica.
+
+.Initialize the consumer from the supplier. This step pushes the current directory data from the supplier to the newly configured consumer.
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w secret instance1 replication agreement initialize "to_consumer_instance2"
+----
++
+This command might take some time depending on the size of your directory. You will see output indicating the initialization progress.
+
+===== Step 3: Verify Replication
+
+After setting up the agreement and initializing the consumer, verify that replication is working correctly and the consumer is serving read requests.
+
+.Log in to `rhds-supplier.example.com` as `root`.
+.Check the replication status for `instance1`:
++
+[source,bash]
+----
+dsreplication status -D "cn=Directory Manager" -w secret instance1
+----
++
+Look for the agreement `to_consumer_instance2` and confirm its status.
+
+.Log in to `rhds-consumer.example.com` as `root`.
+.Check the replication status for `instance2`:
++
+[source,bash]
+----
+dsreplication status -D "cn=Directory Manager" -w secret instance2
+----
++
+You should see that `instance2` is receiving updates from `rhds-supplier.example.com`.
+
+.Perform an LDAP search on the consumer to verify data synchronization.
++
+[source,bash]
+----
+ldapsearch -h rhds-consumer.example.com -p 389 -D "cn=Directory Manager" -w secret -b "dc=example,dc=com" "(objectclass=*)"
+----
++
+This command should return the same entries that exist on the supplier server, confirming that data has been replicated.
+
+.Attempt a write operation on the consumer to confirm it's read-only.
++
+[source,bash]
+----
+ldapadd -h rhds-consumer.example.com -p 389 -D "cn=Directory Manager" -w secret <<EOF
+dn: uid=testuser,ou=People,dc=example,dc=com
+objectclass: top
+objectclass: person
+objectclass: organizationalPerson
+objectclass: inetOrgPerson
+uid: testuser
+cn: Test User
+sn: User
+mail: testuser@example.com
+EOF
+----
++
+You should receive an error similar to this, indicating that write operations are not allowed on a consumer replica:
++
+[source,text]
+----
+ldap_add: Other (e.g., implementation specific) error (80)
+additional info: entry dn "uid=testuser,ou=People,dc=example,dc=com" in suffix "dc=example,dc=com" cannot be added to a replicated subtree on a consumer
+----
++
+This confirms that `rhds-consumer.example.com` is correctly configured as a read-only consumer replica.
+
+===== Troubleshooting Common Issues
+
+*   **Firewall Blocks**: Ensure `firewalld` (or equivalent) is configured on both supplier and consumer to allow TCP traffic on the LDAP/LDAPS ports (389, 636) and the configured replication port.
+    +
+    [source,bash]
+    ----
+    firewall-cmd --add-port=389/tcp --permanent
+    firewall-cmd --add-port=636/tcp --permanent
+    firewall-cmd --reload
+    ----
+*   **Incorrect `bind-dn` or `bind-pw`**: Double-check the replication manager's DN and password in the agreement creation command. A common mistake is using the `cn=Directory Manager` DN instead of `cn=replica,cn=replication managers,cn=config`.
+*   **Hostname Resolution**: Ensure that `rhds-supplier.example.com` can resolve `rhds-consumer.example.com` and vice-versa. Use `ping` or `nslookup` to verify.
+*   **Insufficient Disk Space**: The consumer server needs sufficient disk space to store a full copy of the directory data.
+*   **Replication Logs**: Check the `/var/log/dirsrv/slapd-<instance_name>/errors` log file on both the supplier and consumer for replication-related errors.
+*   **Time Synchronization**: Ensure both servers are time-synchronized using NTP. Time differences can lead to replication issues.
+
+By successfully deploying read-only consumer replicas, you enhance the scalability and redundancy of your Red Hat Directory Server environment, ensuring robust performance for read-intensive applications.

@@ -1,0 +1,521 @@
+#  Identify common LDAP operations (bind, search, add, modify, delete).
+
+= Understand Directory Services and LDAP Fundamentals
+:toc: macro
+toc::[]
+
+== Identify Common LDAP Operations
+
+Understanding the fundamental operations of the Lightweight Directory Access Protocol (LDAP) is crucial for effective administration, configuration, and troubleshooting of directory services like Red Hat Directory Server (RHDS). These operations form the backbone of how clients interact with the directory to authenticate, retrieve, add, modify, and delete information.
+
+In this section, we will delve into the most common LDAP operations: `bind`, `search`, `add`, `modify`, and `delete`. We'll explore their technical details and demonstrate their use with practical, hands-on examples using standard LDAP command-line utilities.
+
+=== The LDAP Bind Operation
+
+The `bind` operation is the foundational step in nearly all LDAP client-server interactions. It serves two primary purposes:
+
+1.  *Authentication*: Verifying the identity of a client attempting to access the directory.
+2.  *Authorization*: Establishing the client's privileges for subsequent operations based on their authenticated identity.
+
+Without a successful bind, most directory operations (except anonymous searches, if allowed) will fail.
+
+==== Technical Explanation of Bind
+
+When a client initiates a bind operation, it sends its credentials (typically a Distinguished Name and password) to the LDAP server. The server then attempts to verify these credentials against its internal authentication mechanisms.
+
+There are several types of bind methods:
+
+*   *Anonymous Bind*: No credentials are provided. Access is limited to what is explicitly permitted for unauthenticated users. This is often restricted for security reasons.
+*   *Simple Bind*: The most common form, where the client sends a DN and a password in clear text or hashed form. While simple, transmitting passwords in clear text is insecure, making TLS/SSL encryption (LDAPS or STARTTLS) essential for production environments using simple binds.
+*   *SASL (Simple Authentication and Security Layer) Bind*: Provides a framework for various authentication mechanisms, offering more robust security features like Kerberos, DIGEST-MD5, and External (client certificates). SASL binds allow for stronger authentication and optionally establish a security layer for subsequent communication.
+
+A successful bind establishes an authenticated session with the server, dictating what the client is permitted to do. An unsuccessful bind results in an error, denying further access or limiting it to anonymous permissions.
+
+==== Hands-on Activity: Performing a Simple Bind
+
+In this lab, you will perform a simple bind to your Red Hat Directory Server instance using the `ldapwhoami` utility. This command attempts to bind to the server and then reports the DN of the authenticated user.
+
+*Prerequisites*:
+*   A running Red Hat Directory Server 13 instance (e.g., `ds.example.com`).
+*   The default Directory Manager credentials (or another user with bind privileges). The default `Directory Manager` password was set during `dscreate` initialization.
+
+.Log in to your RHEL 9 system where you can access the RHDS instance.
+.Perform an anonymous bind to your RHDS instance.
++
+[source,bash]
+----
+ldapwhoami -h ds.example.com -p 389 -x
+----
++
+*Expected Output (or similar if anonymous binds are restricted):*
++
+[source,text]
+----
+anonymous
+----
++
+NOTE: `ldapwhoami` attempts a simple bind by default. The `-x` flag forces a simple authentication mechanism over SASL. If your server is configured to restrict anonymous binds, you might receive an "Invalid credentials" error. This is a good security practice.
+
+.Now, perform a simple bind using the Directory Manager credentials. Replace `your_manager_password` with the actual password you set during installation.
++
+[source,bash]
+----
+ldapwhoami -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password"
+----
++
+*Expected Output:*
++
+[source,text]
+----
+dn: cn=Directory Manager
+----
++
+This output confirms that you successfully authenticated as the `cn=Directory Manager`.
+
+TIP: Always use `-Z` for STARTTLS or `ldaps://` URL scheme for LDAPS when performing simple binds in a production environment to encrypt the communication channel and protect credentials. For this lab, we use plain LDAP (port 389) for simplicity, assuming a controlled lab environment.
+
+=== The LDAP Search Operation
+
+The `search` operation is used to query the directory and retrieve information that matches specified criteria. It is one of the most frequently used LDAP operations.
+
+==== Technical Explanation of Search
+
+An LDAP search operation involves several key components:
+
+*   *Base DN (Distinguished Name)*: The starting point in the directory information tree (DIT) from which the search begins. All results will be descendants of this DN.
+*   *Scope*: Defines how deep the search should go relative to the Base DN.
+    *   `base`: Only the entry specified by the Base DN itself is considered.
+    *   `one`: Only immediate children of the Base DN are considered (one level down).
+    *   `sub` (subtree): The Base DN and all its descendants are considered. This is the most common scope.
+*   *Filter*: A logical expression that specifies the criteria for matching entries. LDAP filters use a prefix notation (e.g., `(attribute=value)`, `(&(filter1)(filter2))`, `(|(filter1)(filter2))`).
+*   *Attributes*: A list of specific attributes to return for matching entries. If no attributes are specified, all user attributes are typically returned. Special attribute `*` returns all user attributes, and `+` returns all operational attributes.
+
+==== Hands-on Activity: Performing LDAP Searches
+
+In this lab, you will use the `ldapsearch` utility to query your RHDS instance.
+
+*Prerequisites*:
+*   A running RHDS instance with some existing data (e.g., the default `userRoot` suffix).
+*   Your Directory Manager credentials.
+
+.Perform a simple search for all entries within the `dc=example,dc=com` suffix. This assumes your `userRoot` suffix is configured as `dc=example,dc=com`. If not, adjust the Base DN.
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "dc=example,dc=com" "(objectclass=*)"
+----
++
+*Explanation of options:*
+*   `-h ds.example.com`: Connect to the server `ds.example.com`.
+*   `-p 389`: Connect on port 389 (standard LDAP).
+*   `-x`: Use simple authentication.
+*   `-D "cn=Directory Manager"`: Bind as the Directory Manager.
+*   `-w "your_manager_password"`: Provide the Directory Manager password.
+*   `-b "dc=example,dc=com"`: Set the Base DN for the search to `dc=example,dc=com`.
+*   `"(objectclass=*)"`: The filter to match all entries (any entry has an `objectclass`).
++
+*Expected Output (truncated, will vary based on your directory content):*
++
+[source,text]
+----
+# extended LDIF
+#
+# LDAPv3
+# base <dc=example,dc=com> with scope subtree
+# filter: (objectclass=*)
+# requesting: ALL
+#
+
+# example.com
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Example.com
+dc: example
+
+# computers, example.com
+dn: ou=computers,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: computers
+
+# people, example.com
+dn: ou=people,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+# <... more entries ...>
+----
+
+.Search for entries with a specific `objectClass`, for example, all organizational units (`organizationalUnit`).
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "dc=example,dc=com" "(objectclass=organizationalUnit)"
+----
++
+*Expected Output (showing organizational units):*
++
+[source,text]
+----
+# people, example.com
+dn: ou=people,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+# computers, example.com
+dn: ou=computers,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: computers
+----
+
+.Search for a specific user, returning only their `cn` and `mail` attributes. (Note: You may not have `cn=testuser` yet, but we will add one later. For now, assume a user named `Directory Manager` exists under `cn=config`.)
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "cn=config" "cn=Directory Manager" cn mail
+----
++
+*Expected Output (if `mail` attribute is present, otherwise it won't be shown):*
++
+[source,text]
+----
+# Directory Manager, config
+dn: cn=Directory Manager,cn=config
+cn: Directory Manager
+mail: directorymanager@example.com <1>
+<1> The `mail` attribute might not be present by default for `cn=Directory Manager`. If it's not, it won't be returned.
+----
+
+=== The LDAP Add Operation
+
+The `add` operation is used to create new entries in the directory. Each new entry must conform to the directory's schema rules, meaning it must possess the mandatory attributes defined by its `objectClass`es.
+
+==== Technical Explanation of Add
+
+To add an entry, the client typically sends an LDIF (LDAP Data Interchange Format) formatted message to the server. The LDIF file specifies:
+
+*   The full `dn` (Distinguished Name) of the new entry.
+*   A list of `objectClass`es that define the entry's type and capabilities.
+*   All mandatory and desired optional attributes, along with their values, for the specified `objectClass`es.
+
+The server validates the incoming entry against its schema and Access Control Instructions (ACIs). If valid and permitted, the entry is added to the directory.
+
+==== Hands-on Activity: Adding a New Entry
+
+In this lab, you will add a new organizational unit (`ou=users`) and then a user entry (`uid=jdoe`) within your `dc=example,dc=com` suffix.
+
+*Prerequisites*:
+*   A running RHDS instance.
+*   Your Directory Manager credentials.
+*   The `dc=example,dc=com` suffix configured.
+
+.First, create an LDIF file named `add_ou.ldif` for a new Organizational Unit:
++
+[source,bash]
+----
+cat << EOF > add_ou.ldif
+dn: ou=users,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: users
+description: Department for all regular users
+EOF
+----
+
+.Add the Organizational Unit entry using `ldapadd`.
++
+[source,bash]
+----
+ldapadd -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -f add_ou.ldif
+----
++
+*Expected Output:*
++
+[source,text]
+----
+adding new entry "ou=users,dc=example,dc=com"
+----
+
+.Verify the new entry by searching for it:
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "ou=users,dc=example,dc=com" "(objectclass=*)"
+----
++
+*Expected Output:*
++
+[source,text]
+----
+# users, example.com
+dn: ou=users,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: users
+description: Department for all regular users
+----
+
+.Now, let's add a new user entry. Create an LDIF file named `add_user.ldif`. We will use the `inetOrgPerson` object class, which requires `cn` and `sn`.
++
+[source,bash]
+----
+cat << EOF > add_user.ldif
+dn: uid=jdoe,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jdoe
+cn: John Doe
+sn: Doe
+givenName: John
+mail: john.doe@example.com
+userPassword: password123
+EOF
+----
++
+NOTE: `userPassword` should never be stored in plain text in production. It should be hashed. For this lab, we use plain text for simplicity.
+
+.Add the user entry using `ldapadd`.
++
+[source,bash]
+----
+ldapadd -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -f add_user.ldif
+----
++
+*Expected Output:*
++
+[source,text]
+----
+adding new entry "uid=jdoe,ou=users,dc=example,dc=com"
+----
+
+.Verify the new user entry:
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "uid=jdoe,ou=users,dc=example,dc=com" "(objectclass=*)"
+----
++
+*Expected Output (truncated):*
++
+[source,text]
+----
+# jdoe, users, example.com
+dn: uid=jdoe,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jdoe
+cn: John Doe
+sn: Doe
+givenName: John
+mail: john.doe@example.com
+userPassword:: e1NTSEF9VlM2O... <1>
+<1> The `userPassword` attribute will be returned as a hashed value (e.g., SSHA) if the server automatically hashes it upon addition, which is the default for RHDS.
+----
+
+=== The LDAP Modify Operation
+
+The `modify` operation is used to change existing attributes of an entry, or to add/remove attributes from an entry. It does *not* change the DN of an entry (that's the `modrdn` operation, sometimes grouped under `modify`).
+
+==== Technical Explanation of Modify
+
+Like `add` operations, `modify` operations are typically performed using LDIF files. However, the format for modifications is distinct. An LDIF modify record specifies:
+
+*   The `dn` of the entry to be modified.
+*   One or more `changetype: modify` directives.
+*   Operations to perform on specific attributes:
+    *   `add`: Adds new values to an attribute. If the attribute doesn't exist, it's created.
+    *   `delete`: Removes specific values from an attribute. If all values are removed, the attribute itself is deleted.
+    *   `replace`: Replaces all existing values of an attribute with new ones. If the attribute doesn't exist, it's created.
+
+Each operation is followed by a hyphen (`-`) to delineate changes for different attributes or operations.
+
+==== Hands-on Activity: Modifying an Entry
+
+In this lab, you will modify the `uid=jdoe` user entry by adding a new attribute and changing an existing one.
+
+*Prerequisites*:
+*   The `uid=jdoe,ou=users,dc=example,dc=com` entry exists from the previous lab.
+*   Your Directory Manager credentials.
+
+.First, let's add a `telephoneNumber` attribute and change John's email address. Create an LDIF file named `modify_user.ldif`:
++
+[source,bash]
+----
+cat << EOF > modify_user.ldif
+dn: uid=jdoe,ou=users,dc=example,dc=com
+changetype: modify
+add: telephoneNumber
+telephoneNumber: +1 555 123 4567
+-
+replace: mail
+mail: john.doe.new@example.com
+-
+EOF
+----
+
+.Apply the modifications using `ldapmodify`.
++
+[source,bash]
+----
+ldapmodify -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -f modify_user.ldif
+----
++
+*Expected Output:*
++
+[source,text]
+----
+modifying entry "uid=jdoe,ou=users,dc=example,dc=com"
+----
+
+.Verify the changes by searching for the user and requesting the modified attributes:
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "uid=jdoe,ou=users,dc=example,dc=com" "(uid=jdoe)" mail telephoneNumber
+----
++
+*Expected Output (truncated):*
++
+[source,text]
+----
+# jdoe, users, example.com
+dn: uid=jdoe,ou=users,dc=example,dc=com
+mail: john.doe.new@example.com
+telephoneNumber: +1 555 123 4567
+----
+
+.Now, let's remove the `telephoneNumber` attribute. Create an LDIF file named `delete_attr.ldif`:
++
+[source,bash]
+----
+cat << EOF > delete_attr.ldif
+dn: uid=jdoe,ou=users,dc=example,dc=com
+changetype: modify
+delete: telephoneNumber
+-
+EOF
+----
+
+.Apply the deletion using `ldapmodify`.
++
+[source,bash]
+----
+ldapmodify -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -f delete_attr.ldif
+----
++
+*Expected Output:*
++
+[source,text]
+----
+modifying entry "uid=jdoe,ou=users,dc=example,dc=com"
+----
+
+.Verify that `telephoneNumber` is no longer present:
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "uid=jdoe,ou=users,dc=example,dc=com" "(uid=jdoe)" telephoneNumber
+----
++
+*Expected Output:*
++
+[source,text]
+----
+# jdoe, users, example.com
+dn: uid=jdoe,ou=users,dc=example,dc=com
+<1> No `telephoneNumber` attribute shown in the output.
+----
+<1> The attribute will not be listed if it no longer exists.
+
+=== The LDAP Delete Operation
+
+The `delete` operation is used to remove an entry from the directory. When an entry is deleted, all its attributes are removed, and if it's a parent entry, all its subordinate (child) entries are also typically deleted, unless the server explicitly prevents this or the `subtree delete` control is not used.
+
+==== Technical Explanation of Delete
+
+To delete an entry, the client sends a `delete` request containing the full `dn` of the entry to be removed. The server performs security checks (ACIs) to ensure the client has permission to delete that specific entry.
+
+*Important Considerations*:
+*   *Subtree Deletion*: Deleting a parent entry usually means all its children are also deleted. This can be a very destructive operation. Some LDAP servers require a special "subtree delete" control or specific permissions to allow deletion of non-leaf entries.
+*   *Referential Integrity*: If other entries reference the deleted entry (e.g., through group membership or other links), those references might become invalid or "dangling". Directory servers typically do not automatically manage this, requiring careful planning.
+
+==== Hands-on Activity: Deleting an Entry
+
+In this lab, you will delete the `uid=jdoe` user entry and then the `ou=users` organizational unit.
+
+*Prerequisites*:
+*   The `uid=jdoe,ou=users,dc=example,dc=com` and `ou=users,dc=example,dc=com` entries exist from previous labs.
+*   Your Directory Manager credentials.
+
+.Delete the `uid=jdoe` user entry.
++
+[source,bash]
+----
+ldapdelete -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" "uid=jdoe,ou=users,dc=example,dc=com"
+----
++
+*Expected Output:*
++
+[source,text]
+----
+deleting entry "uid=jdoe,ou=users,dc=example,dc=com"
+----
+
+.Verify that the user entry is gone.
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "uid=jdoe,ou=users,dc=example,dc=com" "(objectclass=*)"
+----
++
+*Expected Output (error or no results):*
++
+[source,text]
+----
+# search result
+search: 2
+result: 32 No such object
+----
++
+This `No such object` error confirms the entry has been successfully deleted.
+
+.Now, delete the `ou=users` organizational unit. Since `uid=jdoe` has been deleted, `ou=users` is now a leaf node.
++
+[source,bash]
+----
+ldapdelete -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" "ou=users,dc=example,dc=com"
+----
++
+*Expected Output:*
++
+[source,text]
+----
+deleting entry "ou=users,dc=example,dc=com"
+----
+
+.Verify the deletion of `ou=users`.
++
+[source,bash]
+----
+ldapsearch -h ds.example.com -p 389 -x -D "cn=Directory Manager" -w "your_manager_password" -b "ou=users,dc=example,dc=com" "(objectclass=*)"
+----
++
+*Expected Output:*
++
+[source,text]
+----
+# search result
+search: 2
+result: 32 No such object
+----
+
+These common LDAP operations (`bind`, `search`, `add`, `modify`, `delete`) are fundamental to interacting with any LDAP-compliant directory server, including Red Hat Directory Server. Mastering these operations is a critical step in becoming proficient in directory service administration.

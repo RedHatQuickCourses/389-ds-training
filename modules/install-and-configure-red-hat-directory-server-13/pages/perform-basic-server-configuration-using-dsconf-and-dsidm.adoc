@@ -1,0 +1,198 @@
+#  Perform basic server configuration using `dsconf` and `dsidm`.
+
+= Perform Basic Server Configuration with `dsconf` and `dsidm`
+
+As a crucial part of managing Red Hat Directory Server (RHDS) 13, administrators must be proficient in using command-line tools for configuration. This section delves into the fundamental usage of `dsconf` and `dsidm`, two powerful utilities that streamline server configuration and instance management.
+
+== Introduction to `dsconf` and `dsidm`
+
+Red Hat Directory Server provides a robust set of command-line tools for administration, enabling automation and consistent management across environments. Among these, `dsconf` and `dsidm` are essential for initial setup and ongoing basic configuration tasks.
+
+*   `dsconf`: This utility is the primary tool for configuring the *behavior* and *settings* of an RHDS instance. It allows administrators to manage various server-wide parameters, plugin configurations, database settings, security options, and more. Think of `dsconf` as the tool to adjust *what* the directory server does and *how* it does it.
+
+*   `dsidm`: Short for "Directory Server Instance Manager," `dsidm` is used to manage the *instances* of Red Hat Directory Server. While `dscreate` is used to *create* an instance, `dsidm` helps in listing, inspecting, and performing basic operations that relate to the instance itself rather than its internal LDAP configuration. It's often used for tasks that affect the instance's identity or fundamental properties.
+
+Understanding when to use each tool is key to efficient RHDS administration. Generally, `dsconf` is for configuring *within* a running instance's directory tree or settings, while `dsidm` is for managing the *container* or *identity* of the instance itself.
+
+== Using `dsconf` for Server Configuration
+
+`dsconf` is a versatile utility used to query and modify almost any configurable parameter within an RHDS instance. Its commands are logically grouped, making it straightforward to find and adjust specific settings.
+
+.Common `dsconf` Command Structure
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "password" -p 389 [command] [options]
+----
+Where:
+*   `-D "cn=Directory Manager"`: Specifies the bind DN for authentication.
+*   `-w "password"`: Provides the bind password. For security, it's often better to omit `-w` and be prompted, or use a secure method for storing credentials.
+*   `-p 389`: Specifies the port number of the directory server instance. Use `-p 636` for LDAPS connections.
+*   `[command]`: The specific action to perform (e.g., `set`, `get`, `create`, `delete`).
+*   `[options]`: Parameters specific to the command being executed.
+
+Let's look at some common `dsconf` operations for basic configuration.
+
+=== Viewing Server Configuration
+
+To understand the current state of your RHDS instance, you can use `dsconf` to retrieve various settings.
+
+.Example: Get a Server-wide Parameter
+To retrieve the value of a specific server parameter, such as the `nsslapd-accesslog-level`, which controls the verbosity of the access log:
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 get nsslapd-accesslog-level
+----
+This command will output the current numerical value configured for the access log level. A value of `256` is common for logging basic operations.
+
+You can also list all parameters under a specific configuration entry. For instance, to list all general server configuration attributes:
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 get "cn=config"
+----
+This command outputs a large list of server-wide configuration attributes and their current values.
+
+=== Modifying Server Configuration
+
+Changing server settings is equally straightforward with `dsconf`.
+
+.Example: Set a Server-wide Parameter
+Suppose you want to increase the access log level for more detailed auditing temporarily. You can use the `set` command:
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 set nsslapd-accesslog-level=512
+----
+After execution, you can verify the change using the `get` command as shown above.
+Note that some changes might require a server restart to take full effect, though many `nsslapd` parameters are dynamic.
+
+.Example: Configure a Suffix
+RHDS stores data in *suffixes*, which correspond to database instances. You can configure properties for a specific suffix, such as the `dc=example,dc=com` suffix created during instance initialization.
+To get information about a suffix:
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 get "cn=config,cn=ldbm database,cn=plugins,cn=config" suffix="dc=example,dc=com"
+----
+To set a specific parameter for a suffix, for instance, a description:
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 set "cn=config,cn=ldbm database,cn=plugins,cn=config" suffix="dc=example,dc=com" description="Main corporate directory suffix"
+----
+
+=== Expert Tip: Configuration DNs
+All configuration parameters in RHDS are represented as LDAP entries under the `cn=config` suffix. When using `dsconf`, you're effectively interacting with these configuration entries. Understanding the structure of the `cn=config` DIT (Directory Information Tree) can greatly assist in advanced configuration tasks and troubleshooting. For instance, plugin configurations are typically found under `cn=plugins,cn=config`.
+
+== Using `dsidm` for Instance Management
+
+While `dsconf` manages the *internal configuration* of an RHDS instance, `dsidm` manages the *instance itself*. This includes operations like listing instances, viewing their basic properties, and in some cases, modifying instance-level settings.
+
+.Common `dsidm` Command Structure
+[source,bash]
+----
+dsidm [instance_name] [command] [options]
+----
+Where:
+*   `[instance_name]`: The unique name of the Directory Server instance (e.g., `ds01`).
+*   `[command]`: The specific action to perform.
+*   `[options]`: Parameters specific to the command.
+
+=== Listing Directory Server Instances
+
+To see all RHDS instances managed on a particular system, use `dsidm list`:
+[source,bash]
+----
+dsidm list
+----
+This command will output a list of instance names, their status (running/stopped), and their configured ports.
+
+=== Viewing Instance Details
+
+To retrieve detailed information about a specific RHDS instance, use `dsidm info`:
+[source,bash]
+----
+dsidm ds01 info
+----
+Replace `ds01` with the actual name of your instance. This command provides a summary including the instance name, port, status, path to its configuration directory, and other relevant details.
+
+=== Expert Tip: `dsidm` vs. `dsctl`
+While `dsidm` provides information about instances, `dsctl` (Directory Server Control) is the dedicated tool for managing the lifecycle of an RHDS instance, such as starting, stopping, restarting, and enabling/disabling instances. You'll typically use `dsidm` for identification and basic properties, and `dsctl` for operational control.
+
+== Hands-on Lab: Basic Configuration with `dsconf` and `dsidm`
+
+In this lab, you will perform basic configuration tasks using `dsconf` and retrieve instance information using `dsidm`.
+
+=== Prerequisites
+*   A running Red Hat Directory Server 13 instance (e.g., named `ds01`) initialized with a root suffix (e.g., `dc=example,dc=com`).
+*   The Directory Manager password for your instance.
+
+=== Activity Steps
+
+. Verify Directory Server Status
+Before proceeding, ensure your RHDS instance is running.
+[source,bash]
+----
+dsctl status ds01
+----
+Expected Output (or similar, indicating `ds01` is running):
+```
+Instance 'ds01' is running
+```
+
+. Retrieve Current Access Log Level using `dsconf`
+We will first check the current logging level for access logs.
+a. Open your terminal.
+b. Execute the following command, replacing `your_directory_manager_password` with your actual password:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 get nsslapd-accesslog-level
+----
+c. Note the current value. A common default is `256`.
+
+. Change the Access Log Level using `dsconf`
+Let's modify the access log level to `512`, which typically adds more detail (e.g., binds, unbinds, searches, and modifications).
+a. Execute the following command:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 set nsslapd-accesslog-level=512
+----
+b. Verify the change by running the `get` command again:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 get nsslapd-accesslog-level
+----
+c. The output should now show `nsslapd-accesslog-level: 512`.
+
+. Retrieve RHDS Instance Information using `dsidm`
+Now, let's use `dsidm` to gather information about our instance.
+a. List all directory server instances on the system:
++
+[source,bash]
+----
+dsidm list
+----
+b. Note your instance name (e.g., `ds01`) from the list.
+c. Get detailed information for your specific instance:
++
+[source,bash]
+----
+dsidm ds01 info
+----
+d. Review the output, paying attention to the `Port` and `Config Directory` fields.
+
+. (Optional) Revert Access Log Level
+To maintain consistency, you might want to revert the access log level.
+a. Execute the following command to set it back to `256`:
++
+[source,bash]
+----
+dsconf -D "cn=Directory Manager" -w "your_directory_manager_password" -p 389 set nsslapd-accesslog-level=256
+----
+
+=== Troubleshooting Tips
+*   **Authentication Errors**: If you encounter `LDAP bind failed` or `Authentication failed` errors, double-check your Directory Manager password and DN.
+*   **Connection Refused**: Ensure the directory server instance is running and you are using the correct port (`-p` option).
+*   **Permissions**: Ensure the user running `dsconf` or `dsidm` has the necessary permissions. Typically, `root` or a user with `sudo` access is used for `dsidm` and `dsctl`, while `dsconf` requires LDAP bind credentials.
+*   **Incorrect Instance Name**: For `dsidm` commands, ensure the instance name (e.g., `ds01`) matches an existing instance listed by `dsidm list`.
+
+This lab has provided a foundational understanding of how to use `dsconf` for modifying server parameters and `dsidm` for managing instance properties, which are critical skills for any RHDS administrator.

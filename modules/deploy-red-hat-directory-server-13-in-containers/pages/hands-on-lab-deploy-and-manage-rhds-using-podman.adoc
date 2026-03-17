@@ -1,0 +1,299 @@
+#  Hands-on Lab: Deploy and manage RHDS using Podman.
+
+```asciidoc
+= Hands-on Lab: Deploy and Manage RHDS using Podman
+
+[abstract]
+This lab provides a practical guide to deploying and managing Red Hat Directory Server 13 instances using Podman. You will learn how to leverage official container images, configure persistent storage, establish network access, and manage the lifecycle of your containerized directory server.
+
+== Introduction to Containerized RHDS
+
+Containerization, using tools like Podman, offers a lightweight, portable, and efficient way to deploy applications. Red Hat Directory Server 13 provides official container images, enabling quick setup and consistent environments across different RHEL 9 hosts. By containerizing RHDS, you can achieve faster deployments, easier scaling, and improved resource isolation.
+
+This lab focuses on the practical aspects of:
+
+*   Pulling and running the RHDS 13 container image from the Red Hat Registry.
+*   Configuring persistent storage to ensure directory data survives container restarts and removals.
+*   Mapping network ports to allow host access to the containerized RHDS instance.
+*   Performing basic lifecycle management operations on the RHDS container.
+
+=== Prerequisites
+
+Before starting this lab, ensure you have:
+
+*   A Red Hat Enterprise Linux 9 (RHEL 9) system with an active subscription.
+*   `Podman` installed and configured. If not installed, use `sudo dnf install podman`.
+*   Familiarity with basic Linux command-line operations.
+*   An active Red Hat subscription to access `registry.redhat.io`.
+*   The `openldap-clients` package installed for `ldapsearch` and `ldapadd` utilities: `sudo dnf install openldap-clients`.
+
+[NOTE]
+For production environments, always consult the official Red Hat documentation for advanced configuration, security best practices, and high-availability deployments. The `--privileged` flag is generally avoided in production unless absolutely necessary. The official RHDS container image is designed to run without it for most operations.
+
+== Activity 1: Prepare the Container Environment
+
+In this activity, you will ensure Podman is ready and log into the Red Hat container registry to pull the RHDS image.
+
+.Log in to the Red Hat Container Registry
+To pull official Red Hat container images, you need to authenticate with `registry.redhat.io`.
+
+[source,bash]
+----
+podman login registry.redhat.io
+----
+
+When prompted, enter your Red Hat username and password. A successful login will cache your credentials.
+
+.Verify Podman Installation (Optional)
+You can quickly check your Podman version to ensure it's installed correctly.
+
+[source,bash]
+----
+podman --version
+----
+
+== Activity 2: Deploy RHDS with Persistent Storage
+
+Deploying RHDS in a container requires careful consideration of data persistence. Without persistent storage, all directory data would be lost if the container is removed. Podman volumes provide a robust solution for this by decoupling the data from the container's lifecycle.
+
+.Create a Podman Volume for RHDS Data
+A volume is a dedicated storage area managed by Podman that can be mounted into one or more containers.
+
+[source,bash]
+----
+podman volume create rhds-data-vol
+----
+
+.Verify the Volume Creation
+You can inspect the newly created volume to see its details, including its mount point on the host.
+
+[source,bash]
+----
+podman volume inspect rhds-data-vol
+----
+
+.Pull the RHDS 13 Container Image
+Now, pull the official Red Hat Directory Server 13 image from the Red Hat Registry.
+
+[source,bash]
+----
+podman pull registry.redhat.io/rhel8/389-ds-13
+----
+
+[NOTE]
+The `rhel8/389-ds-13` image is built on a Red Hat Enterprise Linux 8 base image, but it runs perfectly fine on a RHEL 9 host system, providing the RHDS 13 capabilities.
+
+.Run the RHDS 13 Container
+You will now run the RHDS container, configuring it with essential parameters for initial setup, persistent storage, and network access.
+
+[IMPORTANT]
+Replace `MySecurePassword123` with a strong, complex password for the Directory Manager and `example.com` with your desired root suffix. Do not use simple passwords in production.
+
+[source,bash]
+----
+podman run -d \
+  --name rhds-instance \
+  -p 389:389 \
+  -p 636:636 \
+  -v rhds-data-vol:/data:Z \
+  -e DS_DM_PASSWORD='MySecurePassword123' \
+  -e DS_ROOT_SUFFIX='dc=example,dc=com' \
+  -e DS_LDAP_PORT=389 \
+  -e DS_LDAPS_PORT=636 \
+  -e DS_DSIDM_PASSWD='MySecurePassword123' \
+  registry.redhat.io/rhel8/389-ds-13
+----
+
+Let's break down these options:
+
+*   `-d`: Runs the container in *detached mode*, meaning it runs in the background and doesn't tie up your terminal.
+*   `--name rhds-instance`: Assigns a human-readable name to your container for easier identification and management.
+*   `-p 389:389`: *Port mapping*. This maps port 389 (standard LDAP) from the container to port 389 on the host system. Clients on the host can connect to `localhost:389`.
+*   `-p 636:636`: Maps port 636 (LDAPS, LDAP over SSL/TLS) from the container to port 636 on the host.
+*   `-v rhds-data-vol:/data:Z`: *Volume mounting*. This mounts the `rhds-data-vol` volume (created earlier) to the `/data` directory *inside* the container. All RHDS configuration and database files will be stored here. The `:Z` flag is crucial for SELinux relabeling, ensuring the container has the necessary permissions to write to the volume.
+*   `-e DS_DM_PASSWORD='MySecurePassword123'`: Sets the password for the Directory Manager user (`cn=Directory Manager`), which is the superuser for RHDS.
+*   `-e DS_ROOT_SUFFIX='dc=example,dc=com'`: Defines the base DN (Distinguished Name) or root suffix for your directory tree. This is where all your directory entries will reside.
+*   `-e DS_LDAP_PORT=389`: Specifies the LDAP port that the RHDS instance *inside* the container will listen on.
+*   `-e DS_LDAPS_PORT=636`: Specifies the LDAPS port that the RHDS instance *inside* the container will listen on.
+*   `-e DS_DSIDM_PASSWD='MySecurePassword123'`: Sets the password for the `dsidm` utility, which is used for managing server instances. By default, it's often the same as the Directory Manager password.
+*   `registry.redhat.io/rhel8/389-ds-13`: The name of the container image to use for creating the instance.
+
+== Activity 3: Verify RHDS Deployment and Connectivity
+
+After running the container, it's crucial to verify that the RHDS instance is up and accessible from your host system.
+
+.Check Container Status
+Use `podman ps` to see if your `rhds-instance` container is running.
+
+[source,bash]
+----
+podman ps
+----
+
+You should see output similar to this, indicating the container is up and running and its ports are mapped:
+
+```
+CONTAINER ID  IMAGE                               COMMAND               CREATED         STATUS        PORTS                                      NAMES
+<ID>          registry.redhat.io/rhel8/389-ds-13  /usr/sbin/init        1 minute ago    Up 1 minute   0.0.0.0:389->389/tcp, 0.0.0.0:636->636/tcp  rhds-instance
+```
+
+.View Container Logs
+Inspect the container logs to ensure the RHDS service started without errors and to see the initial configuration output. This is also a primary troubleshooting step if the container fails to start.
+
+[source,bash]
+----
+podman logs rhds-instance
+----
+
+Look for messages indicating successful initialization and server startup (e.g., "Starting 389-ds: rhds-instance", "Instance rhds-instance is running").
+
+.Test LDAP Connectivity from the Host
+Use the `ldapsearch` utility from your host system to connect to the containerized RHDS and perform a simple search for the root DSE (Directory Server Entry). This search doesn't require authentication.
+
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 -b "" -s base objectclass=*
+----
+
+This command should return information about the directory server itself, confirming connectivity to port 389 on your host.
+
+.Authenticate and Search for the Root Suffix
+Perform an authenticated bind using the Directory Manager credentials and then search for the base DN you configured (e.g., `dc=example,dc=com`). This confirms that authentication is working.
+
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -W -H ldap://localhost:389 -b "dc=example,dc=com" objectclass=*
+----
+
+When prompted, enter the Directory Manager password (`MySecurePassword123`). This should return details about your root suffix, indicating successful authentication and access to your directory's base entry.
+
+== Activity 4: Basic Data Management
+
+This activity demonstrates how to add a simple user entry to your containerized RHDS using `ldapadd` from the host system, further proving connectivity and functionality.
+
+.Create an LDIF File for a New User
+Create a file named `new_user.ldif` with the following content. This LDIF file defines a new user with standard object classes for an identity.
+
+[source,ldif]
+----
+dn: uid=john.doe,ou=People,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: John Doe
+sn: Doe
+uid: john.doe
+mail: john.doe@example.com
+userPassword: password123
+----
+
+.Add the User Entry to RHDS
+Use the `ldapadd` command to add this entry to your directory. This command authenticates as the Directory Manager and sends the LDIF content to the RHDS server via the mapped port.
+
+[source,bash]
+----
+ldapadd -x -D "cn=Directory Manager" -W -H ldap://localhost:389 -f new_user.ldif
+----
+
+Enter the Directory Manager password when prompted. You should see output indicating the addition was successful (e.g., "adding new entry "uid=john.doe,ou=People,dc=example,dc=com"").
+
+.Verify the New User Entry
+Search for the newly added user to confirm it exists in the directory.
+
+[source,bash]
+----
+ldapsearch -x -D "cn=Directory Manager" -W -H ldap://localhost:389 -b "dc=example,dc=com" "uid=john.doe"
+----
+
+This command should return the full details of the "John Doe" entry, confirming that data has been successfully written to and read from your containerized RHDS.
+
+== Activity 5: Manage Container Lifecycle
+
+Understanding how to manage the lifecycle of your RHDS container is crucial for maintenance, updates, and troubleshooting. This includes stopping, starting, restarting, and removing containers and their associated data.
+
+.Stop the RHDS Container
+To gracefully stop the running RHDS instance, use the `podman stop` command. This sends a signal to the container to shut down its processes.
+
+[source,bash]
+----
+podman stop rhds-instance
+----
+
+Verify its status:
+
+[source,bash]
+----
+podman ps
+----
+
+The `rhds-instance` should no longer appear in the list of running containers.
+
+.Start the RHDS Container
+To restart a previously stopped RHDS container and bring the service back online:
+
+[source,bash]
+----
+podman start rhds-instance
+----
+
+Verify its status again:
+
+[source,bash]
+----
+podman ps
+----
+
+The container should now be running. You can also re-run an `ldapsearch` (as in Activity 3) to confirm the server is responsive.
+
+.Restart the RHDS Container
+The `podman restart` command can stop and then start a container in a single operation, which is useful for applying configuration changes or resolving minor issues.
+
+[source,bash]
+----
+podman restart rhds-instance
+----
+
+.Remove the RHDS Container
+When you no longer need the RHDS instance, you can remove its container. This *does not* remove the associated persistent volume, meaning your data remains safe.
+
+[source,bash]
+----
+podman stop rhds-instance
+podman rm rhds-instance
+----
+
+Verify that the container is gone:
+
+[source,bash]
+----
+podman ps -a
+----
+
+The `rhds-instance` should no longer appear, even with `-a` (which shows all containers, including stopped ones).
+
+.Remove the Persistent Volume
+If you are completely finished with the RHDS data and do not need it anymore, you can remove the volume. Remember, the volume holds all your directory data.
+
+[IMPORTANT]
+*This action is irreversible and will permanently delete all data stored in the volume.* Only proceed if you are absolutely certain you no longer need the RHDS directory data.
+
+[source,bash]
+----
+podman volume rm rhds-data-vol
+----
+
+You can verify the volume is removed:
+
+[source,bash]
+----
+podman volume ls
+----
+
+== Summary
+
+In this lab, you successfully deployed a Red Hat Directory Server 13 instance using Podman. You gained practical experience in configuring persistent storage for your directory data, establishing network connectivity to the containerized instance, performing basic LDAP operations from the host, and managing the container's lifecycle (start, stop, restart, remove). This foundation is essential for leveraging the benefits of containerization for your RHDS deployments, enabling rapid provisioning and consistent environments.
+
+[NOTE]
+For advanced configurations such as multi-supplier (formerly multi-master) replication, implementing stronger security with custom certificates, integrating with other Red Hat identity management solutions, or fine-tuning performance, further configuration either inside the container (e.g., using `dsconf` or `dsidm`) or via more advanced Podman options and configuration files would be required.
+```

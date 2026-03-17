@@ -1,0 +1,162 @@
+#  Explain the principles of directory server replication.
+
+= Explain the Principles of Directory Server Replication
+
+Directory server replication is a fundamental concept in enterprise identity management, ensuring high availability, data redundancy, and scalability for directory services. Red Hat Directory Server (RHDS) provides robust replication capabilities, allowing directory data to be synchronized across multiple server instances.
+
+== What is Directory Server Replication?
+
+At its core, directory server replication is the process of copying and distributing directory data from one directory server instance to one or more other instances. This synchronization ensures that changes made on one server are propagated to other participating servers, maintaining data consistency across the environment.
+
+=== Why is Replication Essential for Directory Services?
+
+Replication addresses several critical requirements for modern enterprise directory services:
+
+*   **High Availability (HA):** If one directory server fails, other replicated servers can continue to serve requests, minimizing downtime and ensuring continuous access to critical identity information.
+*   **Load Balancing:** Client applications can distribute their requests across multiple servers, preventing any single server from becoming a bottleneck and improving overall system performance.
+*   **Data Redundancy and Disaster Recovery:** Replicated servers act as backups, protecting against data loss in the event of hardware failure, corruption, or catastrophic events affecting a primary server.
+*   **Geographical Distribution:** Replicas can be deployed in different physical locations, allowing users to access a local directory server, which reduces network latency and improves user experience.
+*   **Scalability:** Read-heavy directory operations, such as authentication and user lookups, can be scaled horizontally by adding more read-only replica servers.
+
+== Core Concepts and Terminology
+
+Understanding the following terms is crucial when working with directory server replication:
+
+=== 1. Supplier (Master)
+
+A **Supplier** (historically called "Master") is a directory server instance that contains a writeable copy of a directory suffix and is configured to replicate changes to one or more consumer servers. In a multi-supplier replication topology, all participating servers can act as both suppliers and consumers, accepting write operations and replicating changes to their peers.
+
+=== 2. Consumer (Replica/Slave)
+
+A **Consumer** (historically called "Replica" or "Slave") is a directory server instance that receives and applies changes replicated from a supplier server. Consumers typically serve read requests, offloading load from suppliers, and provide redundancy. Consumers can be configured as read-only or, in a multi-supplier setup, can also act as suppliers to other consumers.
+
+=== 3. Replication Agreement
+
+A **Replication Agreement** is a configuration entry within the directory that defines the parameters for replication between two specific directory servers. It specifies:
+
+*   Which server is the supplier and which is the consumer for that specific agreement.
+*   Which directory suffix (or portion of it) is being replicated.
+*   The connection details (host, port) for replication.
+*   The credentials (bind DN and password) used by the consumer to authenticate to the supplier for synchronization.
+*   The replication schedule (how often synchronization occurs, or if it's continuous).
+
+=== 4. Change Log and Change Sequence Number (CSN)
+
+For replication to work efficiently, directory servers must track changes made to their data. RHDS uses a **Change Log** (also known as the `retro changelog` plugin in previous versions, or more generally, the change tracking mechanism) to record every modification (add, modify, delete, rename) made to directory entries.
+
+Each change is assigned a unique **Change Sequence Number (CSN)**. The CSN is a globally unique identifier that indicates the order of changes. When a supplier replicates to a consumer, it sends all changes with CSNs newer than the last CSN the consumer reported receiving. This ensures that changes are applied in the correct order and prevents redundant replication of already synchronized data.
+
+=== 5. Conflict Resolution
+
+In a multi-supplier replication environment, it's possible for the same entry to be modified concurrently on different suppliers before changes are replicated. This leads to a **replication conflict**. RHDS employs conflict resolution mechanisms to handle these situations, typically using a "last writer wins" approach based on the timestamp or CSN of the changes. The change with the more recent CSN or modification timestamp will generally overwrite older changes to the same attribute or entry.
+
+=== 6. Consistency Models
+
+Directory replication often operates under an **eventual consistency** model. This means that while all replicas will eventually become consistent, there might be a brief period where different servers hold slightly different versions of the data immediately after a change is made on one server but before it propagates to all others. For most directory service use cases, eventual consistency is acceptable.
+
+== Types of Replication Topologies
+
+RHDS supports various replication topologies to meet different organizational needs:
+
+=== 1. Multi-Supplier Replication (formerly Multi-Master Replication)
+
+.Multi-Supplier Replication
+[graphviz, "multi-supplier-replication", "svg"]
+----
+digraph G {
+    rankdir=LR;
+    node [shape=box];
+    "Server A" [label="Server A (Supplier/Consumer)"];
+    "Server B" [label="Server B (Supplier/Consumer)"];
+    "Server C" [label="Server C (Supplier/Consumer)"];
+
+    "Server A" -> "Server B" [label="Replication Agreement"];
+    "Server B" -> "Server A" [label="Replication Agreement"];
+
+    "Server A" -> "Server C" [label="Replication Agreement"];
+    "Server C" -> "Server A" [label="Replication Agreement"];
+
+    "Server B" -> "Server C" [label="Replication Agreement"];
+    "Server C" -> "Server B" [label="Replication Agreement"];
+}
+----
+In a multi-supplier setup, all participating servers contain a full, writeable copy of the directory data. Any server can accept write operations, and changes are replicated to all other servers in the topology. This provides the highest level of availability and write scalability, as there is no single point of failure for write operations. Each server acts as both a supplier and a consumer to its peers.
+
+=== 2. Single-Supplier/Consumer Replication
+
+.Single-Supplier/Consumer Replication
+[graphviz, "single-supplier-consumer-replication", "svg"]
+----
+digraph G {
+    rankdir=LR;
+    node [shape=box];
+    "Server A" [label="Server A (Supplier)"];
+    "Server B" [label="Server B (Consumer)"];
+    "Server C" [label="Server C (Consumer)"];
+
+    "Server A" -> "Server B" [label="Replication Agreement"];
+    "Server A" -> "Server C" [label="Replication Agreement"];
+}
+----
+In this topology, one server is designated as the primary supplier, accepting all write operations. Other servers are configured as read-only consumers, receiving changes from the primary supplier. While simpler to manage, this setup has a single point of failure for write operations: if the primary supplier goes down, no directory modifications can be made until it's restored or a consumer is manually promoted. This is typically used for environments with very high read loads and infrequent writes, or as part of a more complex topology.
+
+=== 3. Cascading Replication
+
+.Cascading Replication
+[graphviz, "cascading-replication", "svg"]
+----
+digraph G {
+    rankdir=LR;
+    node [shape=box];
+    "Server A" [label="Server A (Supplier)"];
+    "Server B" [label="Server B (Consumer/Supplier)"];
+    "Server C" [label="Server C (Consumer)"];
+
+    "Server A" -> "Server B" [label="Replication Agreement"];
+    "Server B" -> "Server C" [label="Replication Agreement"];
+}
+----
+Cascading replication involves an intermediate server acting as both a consumer from an upstream supplier and a supplier to one or more downstream consumers. This can be useful for reducing the replication load on the primary supplier or for distributing data across wide area networks (WANs) more efficiently by having a local "hub" server replicate to spokes.
+
+== How RHDS Replication Works (Simplified Flow)
+
+The general flow for RHDS replication involves the following steps:
+
+1.  **Change Occurrence:** A client makes a modification (add, modify, delete) to an entry on an RHDS instance that is configured as a supplier for the affected suffix.
+2.  **Change Logging:** The RHDS instance records this modification in its internal change log, assigning a unique CSN to the change.
+3.  **Replication Agreement Trigger:** Based on the configured replication agreement, the supplier either pushes these new changes to its configured consumers, or the consumers pull changes from the supplier. For continuous replication, this happens almost immediately.
+4.  **Consumer Authentication:** The consumer (or the supplier, depending on the push/pull model) authenticates to the other server using the credentials defined in the replication agreement.
+5.  **Change Transfer:** The supplier sends the new changes (identified by CSNs) that the consumer has not yet received.
+6.  **Consumer Application:** The consumer receives the changes and applies them to its local copy of the directory data.
+7.  **Conflict Resolution (if applicable):** If a conflict occurs (e.g., in multi-supplier replication), the conflict resolution logic is applied to determine which change takes precedence.
+8.  **Consistency:** Over time, all replicated servers achieve eventual consistency, ensuring that they hold the same directory data.
+
+.Replication Process Flow
+[plantuml, "replication-process-flow", "svg"]
+----
+@startuml
+participant Client
+participant "Supplier RHDS" as Supplier
+participant "Consumer RHDS" as Consumer
+
+Client -> Supplier: LDAP Modify Request
+Supplier -> Supplier: Records change in internal log (assigns CSN)
+Supplier -> Consumer: Notifies of new changes / Consumer polls Supplier
+activate Supplier
+activate Consumer
+alt Push Replication
+    Supplier -> Consumer: Sends replication update (CSNs, changed data)
+else Pull Replication
+    Consumer -> Supplier: Requests changes since last CSN
+    Supplier --> Consumer: Sends replication update (CSNs, changed data)
+end
+Consumer -> Consumer: Applies changes to local database
+Consumer -> Consumer: Resolves conflicts (if any)
+Consumer --> Supplier: Acknowledges receipt of changes up to CSN
+deactivate Consumer
+deactivate Supplier
+Client <-- Supplier: LDAP Modify Response
+@enduml
+----
+
+Understanding these principles is foundational for designing, deploying, and troubleshooting robust and scalable Red Hat Directory Server environments. The next steps will involve configuring these agreements and monitoring the replication process.

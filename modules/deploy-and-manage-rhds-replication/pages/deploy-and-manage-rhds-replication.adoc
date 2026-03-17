@@ -1,0 +1,13 @@
+#  Deploy and Manage RHDS Replication
+
+=== Deploy and Manage RHDS Replication
+
+Replication ensures high availability and scalability for Red Hat Directory Server (RHDS) by synchronizing directory data across multiple instances.
+
+Key aspects include:
+
+*   Understanding the principles of directory server replication.
+*   Configuring and troubleshooting multi-supplier (formerly multi-master) replication for read/write consistency.
+*   Setting up read-only consumer replicas to enhance scalability and redundancy.
+*   Establishing and managing replication agreements using `dsconf` and `dsidm`.
+*   Monitoring replication status and resolving common issues to maintain data consistency.

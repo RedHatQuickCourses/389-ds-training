@@ -1,0 +1,226 @@
+#  Deploy RHDS 13 instances using official Red Hat registry images.
+
+= Deploy Red Hat Directory Server 13 in Containers
+:navtitle: Deploy RHDS 13 in Containers
+
+== Deploy RHDS 13 instances using official Red Hat registry images
+
+Red Hat Directory Server (RHDS) 13 can be efficiently deployed and managed within containers, offering benefits such as portability, consistency, and simplified lifecycle management. Red Hat provides official container images for RHDS 13, ensuring reliability, security, and enterprise support.
+
+=== Understanding Containerized RHDS Deployment
+
+Containerization, using tools like Podman (Red Hat's daemonless container engine), allows you to package an application and its dependencies into a single unit. This unit, called a container image, can then be run consistently across different environments.
+
+The official Red Hat Directory Server 13 container image is designed to streamline deployment. It includes all necessary components to run RHDS and supports initial configuration through environment variables passed during container creation.
+
+*   *Portability:* Run RHDS consistently across development, testing, and production environments, regardless of the underlying host's specific configurations.
+*   *Isolation:* Each RHDS instance runs in its own isolated environment, preventing conflicts with other applications or services on the host.
+*   *Scalability:* Easily scale up or down by launching new container instances or removing existing ones.
+*   *Efficiency:* Containers share the host OS kernel, leading to less overhead compared to traditional virtual machines.
+*   *Official Support:* Using images from `registry.redhat.io` ensures you are deploying a supported, tested, and secure version of RHDS.
+
+Red Hat Directory Server 13 images are typically built on a Red Hat Enterprise Linux base image (e.g., `rhel8/ds-13`). Even if the base image is RHEL 8, these images are fully compatible and supported for deployment on a Red Hat Enterprise Linux 9 host.
+
+=== Initial Configuration via Environment Variables
+
+When deploying the RHDS container, you can pass several environment variables to perform initial setup of the directory server instance. These variables automate tasks that would otherwise require manual configuration after the container starts.
+
+Key environment variables for initial setup include:
+
+*   `DS_DM_PASSWORD`: Sets the password for the Directory Manager (`cn=Directory Manager`). *This is mandatory for the initial setup.*
+*   `DS_ROOT_SUFFIX`: Defines the base DN (e.g., `dc=example,dc=com`) for your directory data. The server will automatically create this suffix.
+*   `DS_SERVER_ID`: A unique identifier for the directory server instance. This is crucial for replication scenarios.
+*   `DS_LDAP_PORT`: The LDAP port the server will listen on (default is 389).
+*   `DS_LDAPS_PORT`: The LDAPS port the server will listen on (default is 636).
+*   `DS_CREATE_SUFFIX_ENTRIES`: Set to `true` to automatically create the root suffix entry and its default object classes.
+*   `DS_SCHEMA_UPDATE_ALLOW`: Set to `true` to allow schema updates dynamically.
+
+[[lab-deploy-rhds-container]]
+== Hands-on Lab: Deploy and perform initial configuration of an RHDS instance
+
+This lab guides you through deploying an RHDS 13 instance using its official container image and Podman, followed by basic verification.
+
+=== Prerequisites
+
+*   A RHEL 9 system with `Podman` installed.
+*   Access to `registry.redhat.io`. You might need to authenticate to the Red Hat registry.
+    ```bash
+    sudo podman login registry.redhat.io
+    # Enter your Red Hat username and password
+    ```
+
+=== Activity 1: Pull the RHDS Container Image
+
+First, you need to pull the official Red Hat Directory Server 13 image from the Red Hat container registry.
+
+. Open a terminal on your RHEL 9 system.
+. Pull the RHDS 13 container image using `podman pull`. The `rhel8/ds-13` image is the official Red Hat Directory Server 13 image.
++
+[source,bash]
+----
+sudo podman pull registry.redhat.io/rhel8/ds-13:latest
+----
++
+.Expected Output
++
+[source,text]
+----
+Trying to pull registry.redhat.io/rhel8/ds-13:latest...
+Getting image source signatures
+Copying blob sha256:xxxxxxxxxxxx done
+...
+Copying config sha256:xxxxxxxxxxxx done
+Writing manifest to image destination
+Storing signatures
+registry.redhat.io/rhel8/ds-13:latest
+----
+
+=== Activity 2: Deploy the RHDS Container Instance
+
+Now, deploy an RHDS container instance using `podman run`. We will use environment variables to set up the Directory Manager password and the root suffix for the directory.
+
+. Choose a strong password for the Directory Manager and a root suffix for your directory.
++
+[IMPORTANT]
+====
+Replace `<YOUR_DM_PASSWORD>` with a strong, complex password for the Directory Manager. Do not use this example password in a production environment.
+====
++
+[source,bash]
+----
+# Define environment variables for easier command construction
+DM_PASSWORD="<YOUR_DM_PASSWORD>" # Replace with your chosen strong password
+ROOT_SUFFIX="dc=example,dc=com"
+SERVER_ID="rhds01" # A unique ID for this server instance
+
+sudo podman run -d \
+  --name ${SERVER_ID} \
+  -p 389:389 \
+  -p 636:636 \
+  -e DS_DM_PASSWORD="${DM_PASSWORD}" \
+  -e DS_ROOT_SUFFIX="${ROOT_SUFFIX}" \
+  -e DS_SERVER_ID="${SERVER_ID}" \
+  registry.redhat.io/rhel8/ds-13:latest
+----
++
+.Explanation of `podman run` options:
+*   `-d`: Runs the container in detached mode (in the background).
+*   `--name ${SERVER_ID}`: Assigns a memorable name (`rhds01`) to the container for easy identification.
+*   `-p 389:389`: Maps port 389 (LDAP) from the container to port 389 on the host.
+*   `-p 636:636`: Maps port 636 (LDAPS) from the container to port 636 on the host.
+*   `-e DS_DM_PASSWORD="..."`: Sets the Directory Manager's password.
+*   `-e DS_ROOT_SUFFIX="..."`: Configures the initial root suffix.
+*   `-e DS_SERVER_ID="..."`: Sets the unique server ID.
+*   `registry.redhat.io/rhel8/ds-13:latest`: Specifies the container image to use.
+
+.Expected Output
++
+[source,text]
+----
+ea8b0c1e8f2e... # A unique container ID will be displayed
+----
+
+=== Activity 3: Verify the RHDS Container Status
+
+After running the container, verify that it is active and RHDS is running inside.
+
+. Check the status of your running container.
++
+[source,bash]
+----
+sudo podman ps
+----
++
+.Expected Output
++
+[source,text]
+----
+CONTAINER ID  IMAGE                                      COMMAND               CREATED         STATUS         PORTS                                      NAMES
+ea8b0c1e8f2e  registry.redhat.io/rhel8/ds-13:latest      "/usr/sbin/init"      5 seconds ago   Up 4 seconds   0.0.0.0:389->389/tcp, 0.0.0.0:636->636/tcp  rhds01
+----
+
+. View the container logs to ensure RHDS started successfully and initialized the directory. Look for messages indicating server startup and suffix creation.
++
+[source,bash]
+----
+sudo podman logs rhds01 | less
+----
++
+Scroll through the logs. You should see entries similar to these, indicating successful startup and initialization:
++
+[source,text]
+----
+...
+[<date> <time>] - Initializing directory server, please wait...
+...
+[<date> <time>] - Created root suffix: dc=example,dc=com
+...
+[<date> <time>] - 389-Directory Server initialized.
+[<date> <time>] - Server listening on https://rhds01:636/
+[<date> <time>] - Server listening on ldap://rhds01:389/
+...
+----
++
+Press `q` to exit the `less` viewer.
+
+=== Activity 4: Connect to the RHDS Instance
+
+Use standard LDAP command-line tools to connect to the deployed RHDS instance and perform a basic search.
+
+. Perform an anonymous LDAP search for the base suffix you configured (`dc=example,dc=com`).
++
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 -b "dc=example,dc=com" "(objectClass=*)"
+----
++
+.Expected Output
++
+[source,text]
+----
+# extended LDIF
+#
+# LDAPv3
+# base <dc=example,dc=com> with scope subtree
+# filter: (objectClass=*)
+# requesting: ALL
+#
+
+# example.com
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: example.com
+dc: example
+
+# search result
+search: 2
+result: 0 Success
+
+# numResponses: 2
+# numEntries: 1
+----
+
+. Bind as the Directory Manager and perform a search within the configuration branch (`cn=config`). This verifies that your Directory Manager password works.
++
+[source,bash]
+----
+ldapsearch -x -H ldap://localhost:389 \
+  -D "cn=Directory Manager" \
+  -w "<YOUR_DM_PASSWORD>" \
+  -b "cn=config" "(objectClass=*)"
+----
++
+Replace `<YOUR_DM_PASSWORD>` with the password you set in Activity 2.
++
+.Expected Output
++
+If successful, you will see a list of configuration entries from `cn=config`. If the password is incorrect, you will receive an authentication error.
+
+You have successfully deployed and performed initial configuration of an RHDS 13 instance using its official container image and Podman.
+
+[NOTE]
+====
+For persistent storage, database files should be mounted to the host filesystem using Podman volumes. This topic will be covered in detail in the "Configure persistent storage for containerized RHDS data" section. The current deployment will lose its data if the container is removed.
+====

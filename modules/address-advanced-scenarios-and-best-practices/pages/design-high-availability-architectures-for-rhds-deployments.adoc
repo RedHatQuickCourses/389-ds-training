@@ -1,0 +1,209 @@
+#  Design high-availability architectures for RHDS deployments.
+
+Here is the training content for designing high-availability architectures for Red Hat Directory Server 13 deployments, presented in Antora AsciiDoc format.
+
+```adoc
+= Red Hat Directory Server 13: High-Availability Architectures
+
+This section delves into designing robust and resilient architectures for Red Hat Directory Server (RHDS) 13 deployments. We will explore the fundamental principles of high availability (HA), discuss common architectural patterns, and highlight key considerations to ensure your directory service remains continuously operational and performs optimally.
+
+== Understanding High Availability for RHDS
+
+High Availability (HA) in the context of Red Hat Directory Server refers to designing a system that can withstand failures of individual components (servers, network, storage) without significant interruption to service. The primary goals of an RHDS HA architecture are:
+
+*   *Fault Tolerance:* The ability of the system to continue operating despite one or more component failures.
+*   *Data Consistency:* Ensuring that all active directory servers hold the same, accurate data, especially crucial in replicated environments.
+*   *Minimal Downtime:* Reducing the duration of service outages, ideally to zero for planned maintenance and near-zero for unplanned events.
+*   *Scalability:* The ability to handle increased load by distributing client requests across multiple servers.
+
+For a critical service like a directory server, which often underpins authentication, authorization, and information lookup across an entire enterprise, HA is not merely a feature but a fundamental requirement.
+
+=== Key Components and Strategies for RHDS High Availability
+
+Designing an HA architecture for RHDS involves leveraging several technologies and strategies in conjunction.
+
+==== Directory Server Replication
+
+At the core of RHDS HA is replication. Red Hat Directory Server supports multi-supplier (formerly known as multi-master) replication, where multiple instances of RHDS can act as read-write servers, maintaining identical copies of the directory data.
+
+.Benefits of Multi-Supplier Replication
+*   *Redundancy:* If one directory server fails, other replicated servers can continue to serve requests.
+*   *Load Distribution:* Client requests can be distributed across multiple servers, improving overall performance and response times.
+*   *Data Consistency:* Changes made on any supplier server are propagated to all other suppliers, ensuring data synchronization.
+*   *Disaster Recovery:* Replicated data can be spread across different physical locations, providing resilience against site-wide disasters.
+
+When designing, it's crucial to understand replication agreements, conflict resolution mechanisms, and monitoring replication status to ensure data integrity and availability.
+
+==== Load Balancing and Failover
+
+While replication provides redundant data sources, a mechanism is needed to direct client requests to available and healthy directory servers. This is achieved through load balancing and failover strategies.
+
+.Common Load Balancing and Failover Mechanisms
+*   *DNS Round Robin:* A simple method where DNS records for the directory service resolve to multiple IP addresses. Clients randomly pick one. It lacks health checking and graceful failover.
+*   *DNS SRV Records:* Service (SRV) records allow clients to discover available services, their ports, and priority/weight. Clients can try servers based on priority, offering a form of client-side failover.
+*   *Hardware Load Balancers (HLB):* Dedicated appliances (e.g., F5 LTM, Citrix ADC) that sit in front of the directory servers. They perform health checks, distribute traffic intelligently, and redirect clients away from failed servers.
+*   *Software Load Balancers/Proxies:* Solutions like HAProxy or NGINX can act as reverse proxies, distributing LDAP traffic across multiple RHDS instances. They offer similar health checking and load balancing capabilities to HLBs but are software-based.
+*   *Client-Side Failover Libraries:* Some LDAP client libraries can be configured to connect to a list of servers and automatically fail over to the next available server if the primary connection fails.
+
+==== Redundant Infrastructure
+
+True HA extends beyond just the directory servers. The underlying infrastructure must also be redundant.
+
+.Infrastructure Redundancy Considerations
+*   *Servers:* Use multiple physical or virtual servers, ideally in different racks, power domains, or even data centers.
+*   *Networking:* Redundant network cards, switches, and network paths to prevent single points of failure.
+*   *Storage:* Utilize RAID arrays, shared storage solutions (e.g., SAN, NAS with replication), or distributed file systems to protect directory data at rest.
+*   *Power:* Redundant power supplies, Uninterruptible Power Supplies (UPS), and backup generators.
+
+==== Monitoring and Alerting
+
+Proactive monitoring is essential for HA. Without it, failures might go unnoticed until users report issues, leading to extended downtime.
+
+.Key Monitoring Areas for RHDS
+*   *Server Health:* CPU, memory, disk I/O, network utilization.
+*   *RHDS Process Status:* Ensure `dirsrv` processes are running.
+*   *Replication Status:* Monitor replication latency, pending changes, and replication errors.
+*   *LDAP Operation Metrics:* Bind rates, search rates, error rates, response times.
+*   *Log Files:* Centralized log management and alerting on critical errors.
+
+Monitoring tools like Nagios, Zabbix, Prometheus/Grafana, or Red Hat Satellite's insights can be integrated.
+
+==== Backup and Restore
+
+While HA focuses on continuous service availability, robust backup and restore procedures are critical for disaster recovery and protection against data corruption (e.g., accidental deletions or schema changes that replication would propagate). Regularly scheduled backups to off-site storage are paramount.
+
+=== Common RHDS High-Availability Architectures
+
+Let's explore some common HA patterns for RHDS deployments.
+
+==== Two-Server Multi-Supplier Architecture
+
+This is the simplest HA setup, involving two RHDS instances replicating with each other.
+
+.Architecture Overview
+*   Two RHDS instances (Server A and Server B) are configured as multi-suppliers.
+*   All changes on Server A replicate to Server B, and vice-versa.
+*   Clients are configured to use both servers (e.g., via DNS SRV records or client-side failover).
+
+.Advantages
+*   Relatively simple to implement and manage.
+*   Provides redundancy: if one server fails, the other can continue serving requests.
+
+.Disadvantages
+*   No load balancing beyond client-side mechanisms.
+*   During an outage, the remaining server carries the full load, potentially impacting performance.
+*   Risk of a "split-brain" scenario in complex network failures if not carefully managed.
+
+==== Three-Server Multi-Supplier with Load Balancer
+
+This architecture enhances the two-server model by adding a dedicated load balancer and an additional directory server, providing better scalability and fault tolerance.
+
+.Architecture Overview
+*   Three (or more) RHDS instances (Server A, Server B, Server C) are configured as multi-suppliers.
+*   A hardware or software load balancer sits in front of the RHDS instances.
+*   The load balancer performs health checks on all directory servers.
+*   Clients connect only to the load balancer's virtual IP (VIP).
+
+.Advantages
+*   Excellent fault tolerance: can lose one server and still maintain full functionality.
+*   Efficient load distribution: the load balancer intelligently directs traffic.
+*   Seamless client failover: clients only see the load balancer; server failures are transparent.
+*   Improved scalability: easily add more RHDS instances behind the load balancer.
+
+.Disadvantages
+*   Increased complexity and cost due to the load balancer.
+*   The load balancer itself can become a single point of failure if not made redundant.
+
+==== Hub-and-Spoke (Centralized Multi-Supplier with Remote Consumers)
+
+This pattern is suitable for large enterprises with central directory servers and multiple geographically dispersed branch offices.
+
+.Architecture Overview
+*   A central data center hosts a multi-supplier cluster (e.g., three servers with a load balancer). These are the "hub" suppliers.
+*   Remote branch offices deploy read-only RHDS instances (consumers).
+*   The hub suppliers replicate data to the remote consumers.
+*   Clients in branch offices query their local consumer for faster responses and to reduce WAN traffic.
+*   Writes are typically directed to the central hub suppliers (or a designated supplier).
+
+.Advantages
+*   Optimized for distributed environments: fast local reads, reduced WAN latency.
+*   Improved resilience for remote sites: local service even if WAN link fails.
+
+.Disadvantages
+*   Increased complexity in replication topology.
+*   Writes from remote sites may experience higher latency.
+*   Requires careful planning for data synchronization and conflict resolution.
+
+=== Design Considerations for RHDS High Availability
+
+Beyond choosing an architecture, several factors must be carefully considered during the design phase.
+
+==== Network Latency and Bandwidth
+
+Replication performance is highly sensitive to network latency and bandwidth. In multi-data center deployments, ensure sufficient bandwidth and low latency between supplier servers to prevent replication lag and potential data inconsistencies. High latency can lead to replication conflicts and increased CPU utilization.
+
+==== Data Consistency and Conflict Resolution
+
+While multi-supplier replication ensures eventual consistency, conflicts can arise if the same entry is modified concurrently on different suppliers before changes are replicated. RHDS has built-in conflict resolution mechanisms (e.g., timestamp-based). Understanding these and designing your application's write patterns to minimize conflicts is important.
+
+==== Client Configuration
+
+How clients connect to the directory service is critical for HA.
+*   **Application-Level Failover:** Configure applications to list multiple LDAP server URLs and handle connection retries.
+*   **DNS SRV Records:** Configure DNS with SRV records to provide priority and weight to multiple RHDS instances.
+*   **Load Balancer VIP:** Simplest for clients, as they only need to know one IP/hostname.
+
+==== Monitoring Strategy
+
+A comprehensive monitoring and alerting strategy is non-negotiable. Define thresholds for key metrics (replication delay, server load, error rates) and set up alerts to notify administrators proactively. Integrate monitoring with your existing IT operations management tools.
+
+==== Security Implications
+
+When deploying a distributed HA architecture, ensure that all communication channels, especially replication traffic, are secured using TLS/SSL. Manage certificates carefully across all RHDS instances. Configure Access Control Instructions (ACIs) consistently across all suppliers.
+
+==== Maintenance and Patching
+
+Plan for rolling updates and patching procedures. With a robust HA setup, you should be able to take individual servers offline for maintenance without impacting service availability. Ensure your design accounts for temporary capacity reduction during these periods.
+
+== Hands-on Lab: Designing a High-Availability RHDS Architecture
+
+In this lab, you will act as a system architect and design an RHDS 13 HA architecture for a fictional company, "Globex Corp." You will specify the components, justify your choices, and outline the configuration steps.
+
+=== Scenario: Globex Corp. Directory Services
+
+Globex Corp. is a medium-sized enterprise with 2,000 employees. They currently use a single RHDS 13 instance for user authentication, application lookups, and storing employee contact information. This single point of failure has caused several outages, leading to user complaints and productivity loss. Globex wants a highly available and scalable RHDS solution.
+
+.Requirements
+*   **High Availability:** The directory service must tolerate the failure of at least one server without service interruption.
+*   **Performance:** Must handle current load and be scalable for future growth (up to 5,000 employees).
+*   **Data Consistency:** All directory servers must have consistent data.
+*   **Client Access:** Applications and users should be able to connect reliably without complex client-side configuration.
+*   **Monitoring:** The solution must be easily monitorable.
+
+=== Activity Steps
+
+1.  *Architecture Design:* Based on the requirements, sketch out a proposed RHDS 13 HA architecture for Globex Corp.
+    *   How many RHDS instances will you deploy?
+    *   What replication topology will you use?
+    *   How will client requests be load-balanced and handled during a server failure?
+    *   What network infrastructure components are needed?
+    *   Where will these components be deployed (e.g., single data center, multiple racks)?
+
+2.  *Component Justification:* For each major component of your design (e.g., number of servers, load balancer type, replication strategy), provide a brief justification explaining *why* you chose it based on Globex's requirements.
+
+3.  *Client Configuration Plan:* Describe how clients (applications and users) will be configured to connect to your HA RHDS environment. Specify the exact mechanism (e.g., DNS SRV, load balancer VIP, client-side list).
+
+4.  *Monitoring Plan:* Outline the critical metrics you would monitor and what tools or approaches you would use to monitor your designed RHDS HA environment.
+
+5.  *Contingency Planning (Self-reflection):*
+    *   What happens if the load balancer itself fails? How would you mitigate that?
+    *   How would you handle a scenario where an RHDS instance's disk fills up unexpectedly?
+    *   If you needed to add more RHDS instances due to growth, how would your design accommodate that?
+
+.Deliverable
+Document your design, justifications, client configuration plan, and monitoring plan in a text file or markdown format, addressing all activity steps.
+
+[TIP]
+For step 1, consider the trade-offs between a two-server and a three-server multi-supplier setup, especially concerning fault tolerance and the impact of a single server failure. Think about how clients will discover and connect to the available servers.
+
+```

@@ -1,0 +1,238 @@
+#  Identify and diagnose common RHDS issues using various tools.
+
+= Troubleshoot and Maintain Red Hat Directory Server 13
+
+== Identify and Diagnose Common RHDS Issues Using Various Tools
+
+This section focuses on equipping administrators with the knowledge and tools necessary to efficiently identify, diagnose, and resolve common operational issues encountered with Red Hat Directory Server 13 (RHDS). Proactive monitoring and effective troubleshooting are critical for maintaining the availability and performance of a directory service.
+
+=== Understanding Common RHDS Issues
+
+Red Hat Directory Server is a robust service, but like any complex system, it can encounter various issues. Understanding the common categories of problems can help narrow down the diagnostic approach.
+
+*   **Service Availability Issues**: The RHDS instance fails to start, crashes unexpectedly, or becomes unresponsive.
+*   **Performance Degradation**: LDAP operations (searches, binds, modifications) are slow, the server consumes excessive CPU or memory, or disk I/O is high.
+*   **Connectivity Problems**: Clients cannot connect to the directory server, or the server cannot connect to other services (e.g., replication partners).
+*   **Authentication and Authorization Failures**: Users cannot bind to the directory, or access control instructions (ACIs) are not working as expected, leading to unauthorized access or denial of legitimate access.
+*   **Replication Failures**: Data changes are not synchronizing between replication partners, leading to data inconsistencies across replicas.
+*   **Data Integrity Issues**: Corruption within the directory database can lead to incorrect search results, failed operations, or server instability.
+*   **Schema Conflicts**: Inconsistencies or errors in the directory schema can prevent new entries from being added or cause existing entries to become unmanageable.
+*   **Disk Space Exhaustion**: Log files or database files grow too large, consuming all available disk space, which can lead to server crashes or failed operations.
+
+=== Essential Troubleshooting Tools and Techniques
+
+Effective RHDS troubleshooting relies on a combination of system-level utilities and RHDS-specific diagnostic tools.
+
+==== System-Level Tools
+
+These tools help diagnose underlying operating system or resource issues that might be affecting RHDS.
+
+*   `systemctl`: Manages `systemd` services.
+    *   `systemctl status 389ds@_instance_name_`: Checks the current status of an RHDS instance (running, stopped, failed).
+    *   `systemctl stop|start|restart 389ds@_instance_name_`: Controls the RHDS service.
+*   `journalctl`: Queries the `systemd` journal for logs.
+    *   `journalctl -u 389ds@_instance_name_`: Displays logs related to the RHDS service. Use `-f` to follow new log entries.
+*   `top`, `htop`, `vmstat`, `iostat`: Monitor system resources.
+    *   `top` or `htop`: Shows real-time CPU, memory, and process usage. Look for high CPU usage by `ns-slapd` or excessive memory consumption.
+    *   `vmstat`: Reports virtual memory statistics, CPU, I/O, and processes. Useful for identifying memory pressure or CPU bottlenecks.
+    *   `iostat -xz 1`: Reports CPU utilization and I/O statistics for devices, partitions, and network file systems. Helps detect disk I/O bottlenecks.
+*   `ss`, `netstat`: Network utility tools.
+    *   `ss -tulnp | grep 389`: Shows listening sockets for TCP/UDP and associated process information, useful for verifying if RHDS is listening on the expected ports (389 for LDAP, 636 for LDAPS).
+    *   `netstat -tulnp` (older systems) or `netstat -an | grep :389`: Similar to `ss`.
+    *   `ping`, `telnet`, `nc (netcat)`: Basic network connectivity tests to the RHDS server's IP and port.
+
+==== RHDS-Specific Tools and Logs
+
+RHDS provides a rich set of logs and command-line utilities for in-depth diagnostics.
+
+*   **RHDS Log Files**: These are the primary source of information for understanding server behavior and errors.
+    *   **Location**: Typically `/var/log/dirsrv/slapd-_instance_name_/`.
+    *   `errors`: The most crucial log file. Contains critical errors, warnings, and informational messages from the `ns-slapd` daemon. Always check this first for startup failures or unexpected behavior.
+    *   `access`: Logs client connections, bind attempts, search operations, modifications, and other LDAP operations. Essential for diagnosing authentication issues, slow searches, and ACI problems.
+    *   `audit`: Logs security-relevant events, such as successful/failed binds, modifications to critical attributes, and ACI evaluations. (Requires explicit configuration to enable).
+    *   `replication`: Contains detailed information about replication operations, synchronization status, and replication errors. Invaluable for diagnosing replication failures.
+    *   `pid`: A small file containing the Process ID of the `ns-slapd` daemon when it's running.
+
+*   `dsctl`: Directory Server Control Utility.
+    *   `dsctl _instance_name_ status`: Provides a summary of the instance's operational status.
+    *   `dsctl _instance_name_ _command_`: Can start, stop, restart, enable, disable the service.
+    *   `dsctl _instance_name_ healthcheck`: Performs a basic health check on the instance.
+
+*   `ldapsearch`: Command-line LDAP client for querying the directory.
+    *   `ldapsearch -h _hostname_ -p _port_ -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectclass=*)"`: Basic search to verify connectivity, authentication, and data retrieval.
+    *   `ldapsearch -h _hostname_ -p _port_ -D "cn=Directory Manager" -W -T 10 -s base -b "" "cn=config"`: Useful for testing performance (using `-T` for timeout) and connectivity.
+
+*   `ldapwhoami`: A simple LDAP client to test authentication.
+    *   `ldapwhoami -h _hostname_ -p _port_ -D "uid=user01,ou=users,dc=example,dc=com" -W`: Attempts to bind as a specific user.
+
+*   `dsidm`: Directory Server Instance Manager.
+    *   `dsidm _instance_name_ logs list`: Lists configured log files.
+    *   `dsidm _instance_name_ logs set _log_name_ _param_=_value_`: Modifies log settings, such as verbosity levels (e.g., `dsidm _instance_name_ logs set errors verbosity=8192` for high debug). *Be cautious with high verbosity in production, as it can generate very large logs.*
+
+*   `dsconf`: Directory Server Configuration Tool.
+    *   `dsconf -D "cn=Directory Manager" -W config get nsslapd-accesslog-loglevel`: Retrieves specific configuration parameters. Useful for checking current log levels, replication settings, or indexing configurations.
+
+*   `dbscan`: A utility to check the integrity of the directory database (DB_CONFIG, entry files).
+    *   `dbscan _instance_path_`: Runs a scan to detect database corruption. Must be run when the instance is stopped.
+
+*   `ns-slapd -D _instance_path_ -d _debug_level_`: Running the server in debug mode directly.
+    *   This is an advanced technique, typically used when the service won't start via `systemctl`. It runs `ns-slapd` in the foreground with specified debug levels, printing output directly to the console.
+    *   `ns-slapd -D /etc/dirsrv/slapd-_instance_name_ -d 1024`: (Example debug level for common errors).
+
+*   `ldifde.py` (part of `python3-dirsrv`): Python-based LDIF export/import tool.
+    *   `ldifde.py -s _hostname_ -p _port_ -D "cn=Directory Manager" -w - -E _output.ldif_`: Exports data. Can be used to verify data integrity or test connectivity for large exports.
+
+=== Hands-on Lab: Diagnose Common RHDS Operational Issues
+
+In this lab, you will simulate and diagnose common RHDS issues using the tools discussed.
+
+**Prerequisites**:
+*   A running RHEL 9 system with RHDS 13 installed and an instance configured (e.g., `ds01`).
+*   SSH access to the RHEL 9 system.
+*   Basic user `user01` with password `password` created under `ou=users,dc=example,dc=com`.
+
+#### Activity 1: Diagnosing a Service Startup Failure
+
+**Scenario**: You attempt to start the RHDS instance, but it fails to come online.
+
+.  **Stop the RHDS instance (if running):**
+    ```bash
+    sudo dsctl ds01 stop
+    ```
+
+.  **Simulate a configuration error (e.g., invalid port):**
+    ```bash
+    sudo dsconf -D "cn=Directory Manager" -W ldap://localhost:389 config replace nsslapd-port=1023
+    # Enter Directory Manager password when prompted.
+    ```
+    *Note*: `1023` is a privileged port, which `ns-slapd` typically cannot bind to without special permissions, causing a startup failure.
+
+.  **Attempt to start the service and observe the failure:**
+    ```bash
+    sudo dsctl ds01 start
+    ```
+    You should see output indicating a failure.
+
+.  **Check the service status using `systemctl`:**
+    ```bash
+    sudo systemctl status 389ds@ds01
+    ```
+    *Expected Output*: The status will show `failed` and indicate recent log entries. Pay attention to the `Active` line and the last few lines of the output.
+
+.  **Examine the `systemd` journal for detailed errors:**
+    ```bash
+    sudo journalctl -u 389ds@ds01 --since "5 minutes ago"
+    ```
+    Look for messages indicating why the server failed to start, such as "Port cannot be opened" or "Permission denied".
+
+.  **Inspect the RHDS `errors` log for instance-specific details:**
+    ```bash
+    sudo cat /var/log/dirsrv/slapd-ds01/errors | tail -n 20
+    ```
+    *Expected Output*: You should see messages like:
+    `[date] [time] - ERROR - _instance_name_ - The port 1023 cannot be opened.`
+    `[date] [time] - ERROR - _instance_name_ - SSL failed to open the listen port`
+
+.  **Correct the configuration error:**
+    ```bash
+    sudo dsconf -D "cn=Directory Manager" -W ldap://localhost:389 config replace nsslapd-port=389
+    # Enter Directory Manager password.
+    ```
+
+.  **Start the service again and verify it's running:**
+    ```bash
+    sudo dsctl ds01 start
+    sudo systemctl status 389ds@ds01
+    ```
+    *Expected Output*: `Active: active (running)`.
+
+#### Activity 2: Investigating Slow LDAP Searches
+
+**Scenario**: Users report that LDAP searches are taking an unusually long time.
+
+.  **Perform a baseline LDAP search and measure its duration:**
+    ```bash
+    time ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "dc=example,dc=com" "uid=user*"
+    # Enter Directory Manager password.
+    ```
+    Note the `real` time from the `time` command output.
+
+.  **Simulate an unindexed search (if `uid` is indexed, disable it temporarily for this exercise or search on an unindexed attribute):**
+    *   *Self-correction*: For a realistic scenario, let's assume `uid` *is* indexed. We'll simulate a large, inefficient search.
+    *   Create a large number of entries if you don't have many. (For this lab, we'll assume a moderate amount of data is present or just observe the impact of a broad search).
+
+.  **Monitor system resources during a search:**
+    Open a *separate terminal* and run:
+    ```bash
+    sudo top
+    ```
+    Then, in your original terminal, run the broad search again:
+    ```bash
+    ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectclass=person)" > /dev/null
+    # Enter Directory Manager password.
+    ```
+    Observe `top` output. You might see `ns-slapd` consuming significant CPU during the search.
+
+.  **Examine the `access` log for slow operations:**
+    *   Increase the access log verbosity to capture operation timings (optional but helpful for detailed analysis):
+        ```bash
+        sudo dsconf -D "cn=Directory Manager" -W ldap://localhost:389 config replace nsslapd-accesslog-logtosyslog=off nsslapd-accesslog-loglevel=256
+        # Level 256 logs operation timings.
+        ```
+    *   Perform a slow search again:
+        ```bash
+        ldapsearch -h localhost -p 389 -D "cn=Directory Manager" -W -b "dc=example,dc=com" "(objectclass=person)" > /dev/null
+        ```
+    *   View the `access` log:
+        ```bash
+        sudo cat /var/log/dirsrv/slapd-ds01/access | tail -n 20
+        ```
+        Look for entries with `etime` (elapsed time). High `etime` values indicate slow operations. Also, check for `unindexed` or `scanned entries` messages if indexing is not optimal.
+
+.  **Check existing indexes for the relevant attribute (e.g., `uid`):**
+    ```bash
+    sudo dsconf -D "cn=Directory Manager" -W ldap://localhost:389 backend index list -s userroot
+    ```
+    *Expected Output*: Look for `uid` in the list. If it's not present or the index type is basic/none for frequently searched attributes, it could be a performance bottleneck.
+
+.  **Clean up log level change (if applied):**
+    ```bash
+    sudo dsconf -D "cn=Directory Manager" -W ldap://localhost:389 config replace nsslapd-accesslog-loglevel=0 nsslapd-accesslog-logtosyslog=on
+    ```
+
+#### Activity 3: Diagnosing Authentication Failures
+
+**Scenario**: A user reports they cannot log in to an application that uses RHDS for authentication.
+
+.  **Attempt to bind as the user `user01` with an incorrect password:**
+    ```bash
+    ldapwhoami -h localhost -p 389 -D "uid=user01,ou=users,dc=example,dc=com" -W
+    # When prompted, enter an *incorrect* password (e.g., "wrongpass").
+    ```
+    *Expected Output*: `ldap_sasl_interactive_bind_s: Invalid credentials (49)`.
+
+.  **Examine the `access` log for bind failures:**
+    ```bash
+    sudo cat /var/log/dirsrv/slapd-ds01/access | tail -n 20
+    ```
+    *Expected Output*: Look for lines similar to:
+    `conn=_N_ op=_M_ BIND dn="uid=user01,ou=users,dc=example,dc=com" method=128 version=3 failed (49)`
+    The `(49)` error code confirms "Invalid Credentials". If you see `(81)` "Can't contact LDAP server", it's a connectivity issue. If it's `(50)` "Insufficient Access", it's an ACI problem.
+
+.  **Attempt to bind as the user `user01` with the correct password:**
+    ```bash
+    ldapwhoami -h localhost -p 389 -D "uid=user01,ou=users,dc=example,dc=com" -W
+    # Enter the *correct* password ("password").
+    ```
+    *Expected Output*: `dn:"uid=user01,ou=users,dc=example,dc=com"`. This confirms successful authentication.
+
+.  **Check the `access` log again for the successful bind:**
+    ```bash
+    sudo cat /var/log/dirsrv/slapd-ds01/access | tail -n 20
+    ```
+    *Expected Output*:
+    `conn=_N_ op=_M_ BIND dn="uid=user01,ou=users,dc=example,dc=com" method=128 version=3`
+    `conn=_N_ op=_M_ RESULT err=0 tag=97 nentries=0 etime=_X_ `
+    The `err=0` indicates success.
+
+This hands-on lab demonstrated how to use `systemctl`, `journalctl`, `errors` log, `access` log, `top`, and `ldapsearch`/`ldapwhoami` to effectively pinpoint the root cause of common RHDS operational issues. Mastering these tools is fundamental for any RHDS administrator.
